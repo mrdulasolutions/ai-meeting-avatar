@@ -40,7 +40,7 @@ dependencies = [
 claude = [
     "anthropic>=0.40",
 ]
-# Phase 2: avatar video rendering
+# Phase 2: avatar video rendering + virtual camera
 avatar = [
     "torch>=2.0",
     "torchvision>=0.15",
@@ -49,8 +49,10 @@ avatar = [
     "face-alignment>=1.4",
     "imageio>=2.31",
     "imageio-ffmpeg>=0.4",
+    "Pillow>=10.0",
+    "pyvirtualcam>=0.11",
 ]
-# OBS WebSocket integration for virtual camera output
+# OBS WebSocket integration (optional, advanced — pyvirtualcam is simpler)
 obs = [
     "obs-websocket-py>=1.0",
 ]

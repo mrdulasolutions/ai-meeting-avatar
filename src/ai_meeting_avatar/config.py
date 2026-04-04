@@ -122,6 +122,18 @@ class AvatarConfig(BaseModel):
     liveportrait_path: str = "./models/LivePortrait"
     output_fps: int = 25
     enhancer: Optional[str] = "gfpgan"
+    # Render resolution (width, height) — smaller = faster render
+    render_width: int = 256
+    render_height: int = 256
+    # Virtual camera output (pyvirtualcam): "auto" | "obs" | "none"
+    # "auto" tries pyvirtualcam first, falls back to OBS WebSocket
+    # "obs" forces OBS WebSocket only
+    # "none" renders video files but doesn't push to any camera
+    camera_output: str = "auto"
+    # Show static photo in virtual camera when avatar is idle
+    idle_photo: bool = True
+    # Device for PyTorch rendering: "cpu" | "mps" | "cuda"
+    device: str = "cpu"
 
 
 class OBSConfig(BaseModel):

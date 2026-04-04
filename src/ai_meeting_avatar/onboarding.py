@@ -6,11 +6,13 @@ No manual file-placing or terminal knowledge required.
 
 Steps:
   1 — Check + auto-install Python dependencies
-  2 — Download Gemma 4 E2B (LLM) via Hugging Face
-  3 — Download Kokoro TTS models (~80 MB, auto)
-  4 — Start LiveKit dev server (via Docker)
-  5 — End-to-end pipeline test (STT → LLM → TTS)
-  6 — Summary + next steps
+  2 — Choose AI brain (Gemma local or Claude cloud)
+  3 — Set up chosen LLM backend
+  4 — Download Kokoro TTS models (~80 MB, auto)
+  5 — Avatar setup (Phase 2 — optional photo + model download)
+  6 — Start LiveKit dev server (via Docker)
+  7 — End-to-end pipeline test (STT → LLM → TTS)
+  8 — Summary + next steps
 """
 
 from __future__ import annotations
@@ -86,7 +88,7 @@ def step_welcome() -> None:
 
 def step_choose_brain() -> str:
     """Ask the user which LLM backend to use. Returns 'gemma' or 'claude'."""
-    _step(2, 6, "Choose AI brain")
+    _step(2, 8, "Choose AI brain")
 
     console.print(
         Panel(
@@ -145,7 +147,7 @@ def _set_config_backend(backend: str) -> None:
 
 def step_check_deps() -> bool:
     """Check Python packages and system tools. Auto-installs if missing."""
-    _step(1, 5, "Checking dependencies")
+    _step(1, 8, "Checking dependencies")
 
     py_packages = [
         ("faster_whisper", "faster-whisper"),
@@ -199,7 +201,7 @@ def step_check_deps() -> bool:
 
 def step_gemma_download() -> bool:
     """Download Gemma 4 E2B weights from Hugging Face."""
-    _step(3, 6, "LLM — Gemma 4 E2B (Google AI Edge)")
+    _step(3, 8, "LLM — Gemma 4 E2B (Google AI Edge)")
 
     from .config import load_config  # noqa: PLC0415
 
@@ -301,7 +303,7 @@ def step_gemma_download() -> bool:
 
 def step_claude_setup() -> bool:
     """Guide the user through setting up the Claude backend."""
-    _step(3, 6, "LLM — Claude (Anthropic API)")
+    _step(3, 8, "LLM — Claude (Anthropic API)")
 
     import os  # noqa: PLC0415
 
@@ -359,7 +361,7 @@ def step_claude_setup() -> bool:
 
 def step_tts_setup() -> bool:
     """Download Kokoro TTS models and play a test sentence."""
-    _step(4, 6, "TTS — Kokoro voice (~80 MB)")
+    _step(4, 8, "TTS — Kokoro voice (~80 MB)")
 
     from .config import load_config  # noqa: PLC0415
     from .tts import DEFAULT_MODEL_DIR, download_models  # noqa: PLC0415
@@ -413,9 +415,202 @@ def step_tts_setup() -> bool:
     return True
 
 
+def step_avatar_setup() -> bool:
+    """Optional Phase 2 avatar setup: photo, deps, model download."""
+    _step(5, 8, "Talking avatar (Phase 2 — optional)")
+
+    console.print(
+        Panel(
+            "[white]The avatar can show a lip-synced video of a photo during calls.\n"
+            "This appears as a webcam in Zoom/Meet via a virtual camera.\n\n"
+            "[bold]Requirements:[/bold]\n"
+            "  • A front-facing photo (JPG/PNG, at least 256x256)\n"
+            "  • SadTalker model (~500 MB download)\n"
+            "  • Avatar Python deps: torch, opencv, pyvirtualcam\n"
+            "  • OBS Studio installed (for virtual camera on macOS)\n\n"
+            "[dim]Skip this if you only want audio — you can set it up later with:[/dim]\n"
+            "[dim]  ai-avatar avatar-setup[/dim]",
+            title="[bold yellow]Talking Avatar[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+    if not Confirm.ask("  Set up the talking avatar now?", default=False):
+        _info("Skipped. Run later:  ai-avatar avatar-setup")
+        return True  # Not a failure — it's optional
+
+    # ── Photo ─────────────────────────────────────────────────────────────────
+    console.print()
+    photo_path = Prompt.ask(
+        "  Path to your avatar photo (JPG/PNG)",
+        default="./assets/avatar.jpg",
+    )
+
+    from .avatar import validate_photo  # noqa: PLC0415
+
+    result = validate_photo(photo_path)
+    if not result["valid"]:
+        _fail(f"Photo issue: {result['error']}")
+        _info("You can fix this later with:  ai-avatar avatar-setup")
+        return True  # Non-fatal
+
+    _ok(f"Photo valid: {result['width']}x{result['height']}, {result['faces']} face(s) detected")
+
+    # Save photo path to config
+    _set_config_avatar(photo_path)
+    _ok(f"Photo path saved to config.yaml")
+
+    # ── Avatar deps ───────────────────────────────────────────────────────────
+    console.print()
+    _info("Checking avatar dependencies …")
+
+    avatar_deps_missing = False
+    for module, name in [("torch", "torch"), ("cv2", "opencv-python"), ("pyvirtualcam", "pyvirtualcam")]:
+        try:
+            importlib.import_module(module)
+            _ok(name)
+        except ImportError:
+            _fail(f"{name}  [dim](missing)[/dim]")
+            avatar_deps_missing = True
+
+    if avatar_deps_missing:
+        console.print()
+        if Confirm.ask("  Install avatar dependencies? (may take a few minutes)", default=True):
+            _info("Installing avatar deps …")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", ".[avatar]", "-q"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                _ok("Avatar dependencies installed.")
+            else:
+                _fail("Install failed. Run manually:  pip install -e '.[avatar]'")
+                console.print(f"  [dim]{result.stderr[-400:]}[/dim]")
+                return True  # Non-fatal
+        else:
+            _info("Skipped. Install later:  pip install -e '.[avatar]'")
+            return True
+
+    # ── SadTalker model ───────────────────────────────────────────────────────
+    console.print()
+    _info("Checking SadTalker model …")
+
+    from .config import load_config  # noqa: PLC0415
+
+    cfg = load_config()
+    sadtalker_path = Path(cfg.avatar.sadtalker_path)
+
+    if sadtalker_path.exists() and (sadtalker_path / "inference.py").exists():
+        _ok(f"SadTalker already present at {sadtalker_path}")
+    else:
+        if not shutil.which("git"):
+            _warn("git not found — cannot clone SadTalker. Install git first.")
+            return True
+
+        console.print()
+        if Confirm.ask("  Download SadTalker model (~500 MB)?", default=True):
+            _info("Cloning SadTalker …")
+            clone = subprocess.run(
+                ["git", "clone", "--depth", "1",
+                 "https://github.com/OpenTalker/SadTalker.git",
+                 str(sadtalker_path)],
+                capture_output=True, text=True,
+            )
+            if clone.returncode != 0:
+                _fail("SadTalker clone failed.")
+                console.print(f"  [dim]{clone.stderr[-300:]}[/dim]")
+                return True
+
+            # Download checkpoints
+            _info("Downloading SadTalker checkpoints …")
+            ckpt_dir = sadtalker_path / "checkpoints"
+            gfpgan_dir = sadtalker_path / "gfpgan" / "weights"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            gfpgan_dir.mkdir(parents=True, exist_ok=True)
+
+            base_url = "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc"
+            ckpt_files = [
+                "SadTalker_V0.0.2_256.safetensors",
+                "mapping_00109-model.pth.tar",
+                "mapping_00229-model.pth.tar",
+            ]
+            for fname in ckpt_files:
+                dest = ckpt_dir / fname
+                if not dest.exists():
+                    dl = subprocess.run(
+                        ["curl", "-L", "--progress-bar", "-o", str(dest),
+                         f"{base_url}/{fname}"],
+                        capture_output=True, text=True,
+                    )
+                    if dl.returncode == 0 and dest.exists():
+                        _ok(f"Downloaded: {fname}")
+                    else:
+                        _warn(f"Failed to download {fname}")
+
+            # GFPGAN face enhancer
+            gfpgan_dest = gfpgan_dir / "GFPGANv1.4.pth"
+            if not gfpgan_dest.exists():
+                gfpgan_url = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth"
+                subprocess.run(
+                    ["curl", "-L", "--progress-bar", "-o", str(gfpgan_dest), gfpgan_url],
+                    capture_output=True, text=True,
+                )
+                if gfpgan_dest.exists():
+                    _ok("Downloaded: GFPGANv1.4.pth (face enhancer)")
+
+            _ok("SadTalker ready.")
+        else:
+            _info("Skipped. Download later via:  ./scripts/setup_models.sh")
+
+    # ── Enable avatar in config ───────────────────────────────────────────────
+    _set_config_avatar_enabled(True)
+    _ok("Avatar enabled in config.yaml")
+
+    return True
+
+
+def _set_config_avatar(photo_path: str) -> None:
+    """Update avatar.photo_path in config.yaml."""
+    import re  # noqa: PLC0415
+
+    config_path = Path("config.yaml")
+    if not config_path.exists():
+        return
+    text = config_path.read_text()
+    new_text = re.sub(
+        r"^(\s*photo_path:\s*).*$",
+        rf'\1"{photo_path}"',
+        text,
+        flags=re.MULTILINE,
+    )
+    config_path.write_text(new_text)
+
+
+def _set_config_avatar_enabled(enabled: bool) -> None:
+    """Update avatar.enabled in config.yaml."""
+    import re  # noqa: PLC0415
+
+    config_path = Path("config.yaml")
+    if not config_path.exists():
+        return
+    text = config_path.read_text()
+    val = "true" if enabled else "false"
+    new_text = re.sub(
+        r"^(\s*enabled:\s*)(?:true|false)\b",
+        rf"\1{val}",
+        text,
+        flags=re.MULTILINE,
+        count=1,  # Only the first `enabled:` (avatar section comes first in file)
+    )
+    config_path.write_text(new_text)
+
+
 def step_livekit() -> bool:
     """Check if LiveKit is running; offer to start it via Docker."""
-    _step(5, 6, "LiveKit server")
+    _step(6, 8, "LiveKit server")
 
     import urllib.request  # noqa: PLC0415
 
@@ -463,7 +658,7 @@ def step_livekit() -> bool:
 
 def step_pipeline_test() -> bool:
     """Run STT → LLM → TTS end-to-end. Return True if it passes."""
-    _step(6, 6, "End-to-end test")
+    _step(7, 8, "End-to-end test")
 
     console.print("  Runs the full pipeline (loads all models on first run).")
     console.print("  [dim]May take 1-3 minutes while models initialise.[/dim]")
@@ -500,6 +695,7 @@ def step_summary(
     backend: str,
     llm_ok: bool,
     tts_ok: bool,
+    avatar_ok: bool,
     livekit_ok: bool,
     test_ok: bool,
 ) -> None:
@@ -521,6 +717,7 @@ def step_summary(
     else:
         row(llm_ok, "Gemma 4 E2B — local LLM (no server needed)")
     row(tts_ok, "Kokoro TTS — natural voice, no cloning")
+    row(avatar_ok, "Talking avatar (Phase 2)")
     row(livekit_ok, "LiveKit media server")
     row(test_ok, "End-to-end pipeline test")
 
@@ -570,6 +767,7 @@ async def run_onboarding() -> None:
         llm_ok = step_gemma_download()
 
     tts_ok = step_tts_setup()
+    avatar_ok = step_avatar_setup()
     livekit_ok = step_livekit()
     test_ok = step_pipeline_test()
 
@@ -578,6 +776,7 @@ async def run_onboarding() -> None:
         backend=backend,
         llm_ok=llm_ok,
         tts_ok=tts_ok,
+        avatar_ok=avatar_ok,
         livekit_ok=livekit_ok,
         test_ok=test_ok,
     )

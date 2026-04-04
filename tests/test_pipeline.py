@@ -240,7 +240,7 @@ class TestConfig:
         cfg = AppConfig()
         assert cfg.agent.name == "AI Meeting Avatar"
         assert cfg.stt.model_size == "base"
-        assert cfg.llm.model == "llama3.2"
+        assert cfg.llm.backend == "gemma"
 
     def test_load_config_from_yaml(self, tmp_path):
         from ai_meeting_avatar.config import load_config
@@ -267,4 +267,4 @@ stt:
         from ai_meeting_avatar.config import load_config
 
         cfg = load_config("/nonexistent/config.yaml")
-        assert cfg.llm.model == "llama3.2"
+        assert cfg.llm.backend == "gemma"

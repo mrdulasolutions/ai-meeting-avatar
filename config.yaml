@@ -117,18 +117,48 @@ tts:
   model_dir: "./models/kokoro"
 
 # ── Avatar Rendering (Phase 2) ───────────────────────────────────
+# Lip-sync video avatar from a still photo. Renders audio-driven
+# talking-head video and streams it to a virtual webcam so it
+# appears in Google Meet / Zoom as your camera feed.
+#
+# Quick start:
+#   1. pip install -e ".[avatar]"
+#   2. Place a front-facing photo at assets/avatar.jpg
+#   3. ai-avatar avatar enable
+#   4. ai-avatar join my-meeting
+#
+# Requires: OBS Studio installed (for pyvirtualcam backend on macOS)
+# or v4l2loopback on Linux.
 avatar:
   enabled: false
-  # Path to a still photo of the avatar (JPG/PNG, front-facing)
+  # Path to a still photo of the avatar (JPG/PNG, front-facing, min 256×256)
   photo_path: "./assets/avatar.jpg"
-  # "sadtalker" | "liveportrait"
+  # Rendering engine: "sadtalker" | "liveportrait"
+  #   sadtalker    — stable, well-tested, CPU-friendly (~30-120s per utterance)
+  #   liveportrait — higher quality, may need more compute
   model: "sadtalker"
   sadtalker_path: "./models/SadTalker"
   liveportrait_path: "./models/LivePortrait"
   output_fps: 25
-  enhancer: "gfpgan"  # face enhancer: "gfpgan" | "RestoreFormer" | null
+  # Face enhancer applied after rendering: "gfpgan" | "RestoreFormer" | null
+  enhancer: "gfpgan"
+  # Render resolution — smaller = faster. 256×256 is a good balance.
+  render_width: 256
+  render_height: 256
+  # Virtual camera output method:
+  #   "auto"         — try pyvirtualcam, fall back to OBS WebSocket
+  #   "pyvirtualcam" — force pyvirtualcam (requires OBS on macOS)
+  #   "obs"          — force OBS WebSocket only (see obs: section below)
+  #   "none"         — render video files but don't push to any camera
+  camera_output: "auto"
+  # Show static avatar photo in virtual camera when not speaking
+  idle_photo: true
+  # PyTorch device for renderer: "cpu" | "mps" (Apple Silicon) | "cuda"
+  device: "cpu"
 
 # ── OBS Virtual Camera (Phase 2) ─────────────────────────────────
+# Only needed if avatar.camera_output is "obs" or "auto" falls back.
+# Requires OBS >= 28 with WebSocket server enabled (Tools → WebSocket).
 obs:
   enabled: false
   host: "localhost"

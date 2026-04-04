@@ -263,22 +263,55 @@ echo "ANTHROPIC_API_KEY=THE_KEY" >> .env
 
 ---
 
-## Set Avatar Photo
+## Avatar Management
+
+### Set Photo
 
 > "Drop the path to a front-facing photo (JPG or PNG)."
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar
-PHOTO="PATH_FROM_USER"
-sed -i '' "s|  enabled: false|  enabled: true|" config.yaml
-sed -i '' "s|  photo_path:.*|  photo_path: \"$PHOTO\"|" config.yaml
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar set-photo "PATH_FROM_USER"
 ```
+
+### Enable Avatar
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/save-pref.sh" avatar_photo "$PHOTO"
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar enable
 ```
 
-> "Avatar photo set. Phase 2 lip-sync activates on next join. Needs `pip install -e '.[avatar]'` if not done."
+### Disable Avatar
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar disable
+```
+
+### Avatar Status
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar status
+```
+
+### Test Avatar Pipeline
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar test
+```
+
+### Full Avatar Setup (guided)
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar avatar-setup
+```
+
+This installs deps, validates photo, downloads SadTalker, and enables the avatar.
+
+> After any avatar change: leave then rejoin to reload.
 
 ---
 
@@ -303,7 +336,16 @@ AI Meeting Avatar — commands
 /ai-meeting-avatar status      Show health, brain, voice, room
 /ai-meeting-avatar voice       Change the TTS voice
 /ai-meeting-avatar brain       Switch Gemma 4 ↔ Claude
+/ai-meeting-avatar avatar      Manage lip-sync avatar (Phase 2)
 /ai-meeting-avatar help        Show this message
+
+Avatar subcommands:
+  ai-avatar avatar enable      Enable lip-sync video
+  ai-avatar avatar disable     Audio-only mode
+  ai-avatar avatar set-photo   Set source photo
+  ai-avatar avatar test        Test render pipeline
+  ai-avatar avatar status      Check config & readiness
+  ai-avatar avatar-setup       Guided setup (photo + deps + models)
 
 First time? Say "set up the avatar" for guided onboarding.
 Audio routing: brew install blackhole-2ch
@@ -332,6 +374,14 @@ tts:
   voice: "af_heart"
   speed: 1.0
   lang: "en-us"             # en-us | en-gb
+avatar:
+  enabled: false            # true to enable lip-sync video
+  photo_path: "./assets/avatar.jpg"
+  model: "sadtalker"        # "sadtalker" | "liveportrait"
+  camera_output: "auto"     # "auto" | "pyvirtualcam" | "obs" | "none"
+  render_width: 256
+  render_height: 256
+  device: "cpu"             # "cpu" | "mps" | "cuda"
 agent:
   system_prompt: |
     You are attending this meeting on behalf of [Name].

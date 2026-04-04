@@ -5,6 +5,7 @@ Commands
 ────────
   ai-avatar onboard              Interactive setup wizard (start here)
   ai-avatar join <room>          Join a LiveKit room as the avatar agent
+  ai-avatar avatar-setup         Set up Phase 2 talking avatar (photo + models)
   ai-avatar test-pipeline        Record 5 s from mic and run STT → LLM → TTS locally
   ai-avatar check-deps           Verify all Python deps and binaries are present
   ai-avatar generate-token       Generate a LiveKit participant token
@@ -302,6 +303,107 @@ def check_deps() -> None:
         console.print("\n[bold green]All dependencies satisfied![/bold green]")
 
 
+# ── avatar-setup ──────────────────────────────────────────────────────────────
+
+
+@cli.command("avatar-setup")
+@click.option("--photo", "-p", default=None, help="Path to avatar photo (JPG/PNG)")
+@click.pass_context
+def avatar_setup(ctx: click.Context, photo: str | None) -> None:
+    """
+    Set up Phase 2 talking avatar — photo validation, model download, deps.
+
+    This is the same setup that runs during onboarding, but standalone
+    so you can add the avatar after initial setup.
+
+    \b
+    Examples:
+        ai-avatar avatar-setup                       # interactive
+        ai-avatar avatar-setup --photo ./me.jpg      # specify photo directly
+    """
+    import importlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    from rich.console import Console as RConsole  # noqa: PLC0415
+    from rich.prompt import Confirm as RConfirm  # noqa: PLC0415
+    from rich.prompt import Prompt as RPrompt  # noqa: PLC0415
+
+    from .avatar import validate_photo  # noqa: PLC0415
+    from .config import load_config  # noqa: PLC0415
+
+    rcon = RConsole()
+    config_path = ctx.obj["config_path"]
+    cfg = load_config(config_path)
+
+    # ── Photo ─────────────────────────────────────────────────────────────────
+    if photo is None:
+        photo = RPrompt.ask(
+            "Path to your avatar photo (JPG/PNG)",
+            default=cfg.avatar.photo_path,
+        )
+
+    result = validate_photo(photo)
+    if not result["valid"]:
+        rcon.print(f"[red]Photo issue: {result['error']}[/red]")
+        sys.exit(1)
+
+    rcon.print(
+        f"[green]Photo valid:[/green] {result['width']}x{result['height']}, "
+        f"{result['faces']} face(s) detected"
+    )
+
+    # Update config.yaml
+    cfg_file = Path(config_path)
+    if cfg_file.exists():
+        text = cfg_file.read_text()
+        text = re.sub(
+            r"^(\s*photo_path:\s*).*$",
+            rf'\1"{photo}"',
+            text,
+            flags=re.MULTILINE,
+        )
+        text = re.sub(
+            r"^(\s*enabled:\s*)(?:true|false)\b",
+            r"\1true",
+            text,
+            flags=re.MULTILINE,
+            count=1,
+        )
+        cfg_file.write_text(text)
+        rcon.print("[green]Avatar enabled in config.yaml[/green]")
+
+    # ── Check deps ────────────────────────────────────────────────────────────
+    missing = []
+    for module, name in [("torch", "torch"), ("cv2", "opencv-python"), ("pyvirtualcam", "pyvirtualcam")]:
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            missing.append(name)
+
+    if missing:
+        rcon.print(f"\n[yellow]Missing avatar deps: {', '.join(missing)}[/yellow]")
+        if RConfirm.ask("Install now?", default=True):
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", ".[avatar]", "-q"],
+            )
+        else:
+            rcon.print("Install later:  [cyan]pip install -e '.[avatar]'[/cyan]")
+
+    # ── Check SadTalker ──────────────────────────────────────────────────────
+    sadtalker_path = Path(cfg.avatar.sadtalker_path)
+    if not sadtalker_path.exists() or not (sadtalker_path / "inference.py").exists():
+        rcon.print("\n[yellow]SadTalker not found.[/yellow]")
+        rcon.print("Download it:  [cyan]./scripts/setup_models.sh[/cyan]")
+    else:
+        rcon.print("[green]SadTalker model found.[/green]")
+
+    rcon.print(
+        "\n[bold green]Avatar setup complete.[/bold green]\n"
+        "Restart the avatar to see it:  [cyan]ai-avatar join <room>[/cyan]"
+    )
+
+
 # ── brain ──────────────────────────────────────────────────────────────────────
 
 
@@ -394,6 +496,268 @@ def brain(ctx: click.Context, backend: str | None) -> None:
         )
 
     rcon.print("[bold green]Restart[/bold green] the avatar to apply the change.")
+
+
+# ── avatar ────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def avatar() -> None:
+    """Manage the lip-sync avatar (Phase 2).
+
+    \b
+    Commands:
+        ai-avatar avatar enable       Enable avatar video rendering
+        ai-avatar avatar disable      Disable avatar (audio-only mode)
+        ai-avatar avatar set-photo    Set the avatar source photo
+        ai-avatar avatar test         Test avatar rendering pipeline
+        ai-avatar avatar status       Show current avatar configuration
+    """
+
+
+@avatar.command("enable")
+@click.pass_context
+def avatar_enable(ctx: click.Context) -> None:
+    """Enable avatar video rendering in config.yaml."""
+    _set_avatar_config(ctx.obj["config_path"], "enabled", "true")
+    click.echo("Avatar enabled. Next `ai-avatar join` will render lip-sync video.")
+    click.echo("Make sure you have:")
+    click.echo("  1. pip install -e '.[avatar]'")
+    click.echo("  2. A photo at assets/avatar.jpg (or set avatar.photo_path)")
+    click.echo("  3. SadTalker models (./scripts/setup_models.sh)")
+
+
+@avatar.command("disable")
+@click.pass_context
+def avatar_disable(ctx: click.Context) -> None:
+    """Disable avatar — return to audio-only mode."""
+    _set_avatar_config(ctx.obj["config_path"], "enabled", "false")
+    click.echo("Avatar disabled. Running in audio-only mode.")
+
+
+@avatar.command("set-photo")
+@click.argument("photo_path", type=click.Path(exists=True))
+@click.pass_context
+def avatar_set_photo(ctx: click.Context, photo_path: str) -> None:
+    """Set the avatar source photo (JPG/PNG, front-facing).
+
+    \b
+    Example:
+        ai-avatar avatar set-photo ~/Pictures/headshot.jpg
+    """
+    from .avatar import validate_photo  # noqa: PLC0415
+
+    result = validate_photo(photo_path)
+    if not result["valid"]:
+        click.echo(f"Photo validation failed: {result['error']}")
+        raise SystemExit(1)
+
+    # Copy to assets/avatar.jpg
+    import shutil  # noqa: PLC0415
+
+    dest = Path("assets/avatar.jpg")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(photo_path, dest)
+
+    _set_avatar_config(ctx.obj["config_path"], "photo_path", f'"{dest}"')
+    click.echo(
+        f"Avatar photo set: {dest} "
+        f"({result['width']}×{result['height']}, {result['faces']} face(s) detected)"
+    )
+
+
+@avatar.command("test")
+@click.option("--text", "-t", default="Hello, this is a test of the avatar rendering pipeline.",
+              help="Text to synthesize and render")
+@click.pass_context
+def avatar_test(ctx: click.Context, text: str) -> None:
+    """Test the full avatar rendering pipeline (TTS → renderer → virtual camera)."""
+    asyncio.run(_avatar_test(ctx.obj["config_path"], text))
+
+
+async def _avatar_test(config_path: str, text: str) -> None:
+    import tempfile  # noqa: PLC0415
+
+    from rich.console import Console  # noqa: PLC0415
+
+    from .avatar import create_renderer, create_virtual_camera, validate_photo  # noqa: PLC0415
+    from .config import load_config  # noqa: PLC0415
+    from .tts import KokoroTTS  # noqa: PLC0415
+
+    console = Console()
+    cfg = load_config(config_path)
+
+    if not cfg.avatar.enabled:
+        console.print("[red]Avatar is disabled.[/red] Run: ai-avatar avatar enable")
+        return
+
+    # Validate photo
+    console.print("[bold cyan]Checking avatar photo …[/bold cyan]")
+    photo_result = validate_photo(cfg.avatar.photo_path)
+    if not photo_result["valid"]:
+        console.print(f"[red]Photo invalid:[/red] {photo_result['error']}")
+        return
+    console.print(
+        f"  Photo OK: {photo_result['width']}×{photo_result['height']}, "
+        f"{photo_result['faces']} face(s)"
+    )
+
+    # TTS
+    console.print("[bold cyan]Synthesizing speech …[/bold cyan]")
+    tts = KokoroTTS(
+        voice=cfg.tts.voice,
+        speed=cfg.tts.speed,
+        lang=cfg.tts.lang,
+        model_dir=cfg.tts.model_dir,
+    )
+    tts.load()
+    wav_bytes = await tts.synthesize_to_wav_bytes(text)
+    console.print(f"  Audio: {len(wav_bytes)} bytes")
+
+    # Renderer
+    console.print("[bold cyan]Loading avatar renderer …[/bold cyan]")
+    renderer = create_renderer(cfg.avatar)
+    if not renderer.is_available():
+        console.print(
+            f"[red]Renderer '{cfg.avatar.model}' is not available.[/red]\n"
+            "  Run: ./scripts/setup_models.sh"
+        )
+        return
+
+    await renderer.load()
+    console.print(f"  Renderer: {cfg.avatar.model}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        audio_path = str(Path(tmp) / "test.wav")
+        Path(audio_path).write_bytes(wav_bytes)
+
+        console.print("[bold cyan]Rendering avatar video …[/bold cyan]")
+        console.print("  [dim]This may take 30-120 seconds on CPU …[/dim]")
+        video_path = await renderer.render(audio_path, tmp)
+        console.print(f"  Video: {video_path}")
+
+        # Try virtual camera
+        vcam = create_virtual_camera(cfg.avatar)
+        if vcam is not None:
+            console.print("[bold cyan]Testing virtual camera …[/bold cyan]")
+            try:
+                await vcam.start()
+                await vcam.stream_video(video_path)
+                await vcam.stop()
+                console.print("  [bold green]Virtual camera test passed![/bold green]")
+            except Exception as exc:
+                console.print(f"  [yellow]Virtual camera test failed: {exc}[/yellow]")
+        else:
+            console.print("  [dim]Virtual camera not configured (camera_output=none)[/dim]")
+
+        # Play audio
+        try:
+            import sounddevice as sd  # noqa: PLC0415
+
+            audio_float, sr = await tts.synthesize(text)
+            console.print("[bold cyan]Playing audio …[/bold cyan]")
+            sd.play(audio_float, sr)
+            sd.wait()
+        except ImportError:
+            console.print("  [dim]sounddevice not installed — skipping playback[/dim]")
+
+    console.print("[bold green]Avatar test complete![/bold green]")
+
+
+@avatar.command("status")
+@click.pass_context
+def avatar_status(ctx: click.Context) -> None:
+    """Show current avatar configuration and readiness."""
+    from rich.console import Console as RConsole  # noqa: PLC0415
+    from rich.table import Table  # noqa: PLC0415
+
+    from .avatar import validate_photo  # noqa: PLC0415
+    from .config import load_config  # noqa: PLC0415
+
+    cfg = load_config(ctx.obj["config_path"])
+    rcon = RConsole()
+
+    table = Table(title="Avatar Configuration (Phase 2)")
+    table.add_column("Setting", style="bold")
+    table.add_column("Value")
+    table.add_column("Status")
+
+    # Enabled
+    table.add_row(
+        "Enabled",
+        str(cfg.avatar.enabled),
+        "[green]ON[/green]" if cfg.avatar.enabled else "[dim]OFF[/dim]",
+    )
+
+    # Photo
+    photo = validate_photo(cfg.avatar.photo_path) if cfg.avatar.enabled else {"valid": False}
+    photo_status = "[green]OK[/green]" if photo.get("valid") else "[red]MISSING[/red]"
+    table.add_row("Photo", cfg.avatar.photo_path, photo_status)
+
+    # Renderer
+    renderer_path = (
+        cfg.avatar.sadtalker_path if cfg.avatar.model == "sadtalker"
+        else cfg.avatar.liveportrait_path
+    )
+    renderer_exists = Path(renderer_path).exists()
+    table.add_row(
+        "Renderer",
+        cfg.avatar.model,
+        "[green]installed[/green]" if renderer_exists else "[red]not found[/red]",
+    )
+
+    # Camera output
+    table.add_row("Camera output", cfg.avatar.camera_output, "")
+
+    # Resolution
+    table.add_row("Resolution", f"{cfg.avatar.render_width}×{cfg.avatar.render_height}", "")
+
+    # Device
+    table.add_row("Device", cfg.avatar.device, "")
+
+    # Enhancer
+    table.add_row("Enhancer", str(cfg.avatar.enhancer or "none"), "")
+
+    # pyvirtualcam
+    try:
+        import pyvirtualcam  # noqa: PLC0415, F401
+        vcam_status = "[green]installed[/green]"
+    except ImportError:
+        vcam_status = "[red]not installed[/red]"
+    table.add_row("pyvirtualcam", "", vcam_status)
+
+    # Avatar deps
+    try:
+        import cv2  # noqa: PLC0415, F401
+        import torch  # noqa: PLC0415, F401
+        deps_status = "[green]OK[/green]"
+    except ImportError:
+        deps_status = "[yellow]pip install -e '.[avatar]'[/yellow]"
+    table.add_row("Avatar deps", "", deps_status)
+
+    rcon.print(table)
+
+    if not cfg.avatar.enabled:
+        rcon.print("\n[dim]Enable with:[/dim]  ai-avatar avatar enable")
+
+
+def _set_avatar_config(config_path: str, key: str, value: str) -> None:
+    """Update a single avatar.KEY in config.yaml via regex."""
+    import re  # noqa: PLC0415
+
+    cfg_file = Path(config_path)
+    if not cfg_file.exists():
+        click.echo(f"config.yaml not found at '{config_path}'.")
+        raise SystemExit(1)
+
+    text = cfg_file.read_text()
+    pattern = rf"^(\s*{re.escape(key)}:\s*).*$"
+    new_text = re.sub(pattern, rf"\g<1>{value}", text, flags=re.MULTILINE)
+
+    if new_text == text:
+        click.echo(f"Warning: key '{key}' not found in {config_path}")
+    else:
+        cfg_file.write_text(new_text)
 
 
 # ── generate-token ─────────────────────────────────────────────────────────────

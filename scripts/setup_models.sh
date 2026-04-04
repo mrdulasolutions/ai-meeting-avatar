@@ -166,20 +166,39 @@ else
     echo "  Downloading SadTalker checkpoints …"
     cd "$SADTALKER_DIR"
 
-    if [ -f "scripts/download_models.sh" ]; then
-      bash scripts/download_models.sh
+    # Download checkpoints directly — SadTalker's own download script may
+    # not exist or may be broken in shallow clones.
+    CKPT_DIR="$SADTALKER_DIR/checkpoints"
+    GFPGAN_DIR="$SADTALKER_DIR/gfpgan/weights"
+    mkdir -p "$CKPT_DIR" "$GFPGAN_DIR"
+
+    BASE_URL="https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc"
+    for f in SadTalker_V0.0.2_256.safetensors mapping_00109-model.pth.tar mapping_00229-model.pth.tar; do
+      if [ -f "$CKPT_DIR/$f" ]; then
+        yellow "    $f already present — skipping."
+      else
+        echo "    Downloading $f …"
+        if command -v curl &>/dev/null; then
+          curl -L --progress-bar -o "$CKPT_DIR/$f" "$BASE_URL/$f" || true
+        elif command -v wget &>/dev/null; then
+          wget -q --show-progress -O "$CKPT_DIR/$f" "$BASE_URL/$f" || true
+        fi
+        [ -f "$CKPT_DIR/$f" ] && green "    Downloaded: $f" || yellow "    Failed: $f (non-fatal)"
+      fi
+    done
+
+    # GFPGAN face enhancer (optional but recommended)
+    GFPGAN_URL="https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth"
+    if [ -f "$GFPGAN_DIR/GFPGANv1.4.pth" ]; then
+      yellow "    GFPGANv1.4.pth already present — skipping."
     else
-      CKPT_DIR="$SADTALKER_DIR/checkpoints"
-      GFPGAN_DIR="$SADTALKER_DIR/gfpgan/weights"
-      mkdir -p "$CKPT_DIR" "$GFPGAN_DIR"
-
-      BASE_URL="https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc"
-      for f in SadTalker_V0.0.2_256.safetensors mapping_00109-model.pth.tar mapping_00229-model.pth.tar; do
-        wget -q --show-progress -O "$CKPT_DIR/$f" "$BASE_URL/$f" || true
-      done
-
-      GFPGAN_URL="https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0"
-      wget -q --show-progress -O "$GFPGAN_DIR/GFPGANv1.4.pth" "$GFPGAN_URL/GFPGANv1.4.pth" || true
+      echo "    Downloading GFPGANv1.4.pth (face enhancer) …"
+      if command -v curl &>/dev/null; then
+        curl -L --progress-bar -o "$GFPGAN_DIR/GFPGANv1.4.pth" "$GFPGAN_URL" || true
+      elif command -v wget &>/dev/null; then
+        wget -q --show-progress -O "$GFPGAN_DIR/GFPGANv1.4.pth" "$GFPGAN_URL" || true
+      fi
+      [ -f "$GFPGAN_DIR/GFPGANv1.4.pth" ] && green "    Downloaded: GFPGANv1.4.pth"
     fi
 
     green "  SadTalker ready."

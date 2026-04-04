@@ -8,8 +8,9 @@ Architecture
 3.  Each audio frame is fed into an EnergyVAD.
 4.  When VAD detects end-of-speech it fires the pipeline:
       audio → WhisperSTT → GemmaLLM (LiteRT-LM) → CoquiXTTS → AudioSource → room
-5.  (Phase 2) The synthesised audio also drives the AvatarRenderer and the
-    result is pushed to OBS via OBSVirtualCamera.
+5.  (Phase 2) Audio streams immediately while the AvatarRenderer generates
+    lip-synced video in the background.  Rendered frames are pushed to a
+    virtual webcam (pyvirtualcam) or OBS, appearing as a camera in Zoom/Meet.
 
 One pipeline task runs at a time per agent instance; overlapping utterances
 are queued rather than processed concurrently so the LLM context is coherent.
@@ -29,7 +30,13 @@ from typing import Optional
 import numpy as np
 from livekit import rtc
 
-from .avatar import AvatarRenderer, OBSVirtualCamera, create_renderer
+from .avatar import (
+    AvatarRenderer,
+    OBSVirtualCamera,
+    VirtualCamera,
+    create_renderer,
+    create_virtual_camera,
+)
 from .config import AppConfig, load_config
 from .llm import ChatHistory, GemmaLLM
 from .llm_claude import ClaudeLLM
@@ -98,6 +105,7 @@ class MeetingAvatarAgent:
             model_dir=config.tts.model_dir,
         )
         self._avatar: AvatarRenderer = create_renderer(config.avatar)
+        self._vcam: Optional[VirtualCamera] = create_virtual_camera(config.avatar)
         self._obs: Optional[OBSVirtualCamera] = None
 
         self._history = ChatHistory(
@@ -117,6 +125,16 @@ class MeetingAvatarAgent:
         self._tts.load()
         self._llm.load()
         await self._avatar.load()
+
+        # Start virtual camera (pyvirtualcam) if avatar is enabled
+        if self._vcam is not None:
+            try:
+                await self._vcam.start()
+                # Show idle photo immediately
+                await self._vcam.send_idle_frame()
+            except Exception:
+                logger.exception("Failed to start virtual camera — continuing without it")
+                self._vcam = None
 
         if self._cfg.obs.enabled:
             self._obs = OBSVirtualCamera(
@@ -162,6 +180,11 @@ class MeetingAvatarAgent:
         disconnected = asyncio.Event()
         room.on("disconnected", lambda: disconnected.set())
         await disconnected.wait()
+
+        # Cleanup virtual camera on disconnect
+        if self._vcam is not None:
+            await self._vcam.stop()
+
         logger.info("Room disconnected — agent shutting down.")
 
     # ── Audio track handler ────────────────────────────────────────────────────
@@ -267,40 +290,66 @@ class MeetingAvatarAgent:
             await asyncio.sleep(len(chunk_int16) / sr)
 
     async def _speak_with_avatar(self, text: str) -> None:
-        """Synthesise audio, render avatar video, push both to room + OBS."""
-        with tempfile.TemporaryDirectory() as tmp:
-            audio_path = str(Path(tmp) / "reply.wav")
-            video_path = str(Path(tmp) / "avatar.mp4")
+        """
+        Synthesise audio, render avatar video, push both to room + virtual camera.
 
-            # Write synthesised audio to disk for SadTalker/LivePortrait
-            wav_bytes = await self._tts.synthesize_to_wav_bytes(text)
-            Path(audio_path).write_bytes(wav_bytes)
+        Architecture (decoupled audio/video):
+          1. Single TTS call produces both WAV (for renderer) and LiveKit audio
+          2. Audio streams to LiveKit immediately (no render delay)
+          3. Video renders in background → streams to virtual camera when ready
+          4. Static photo shows on virtual camera while rendering
+        """
+        # ── Single TTS call ───────────────────────────────────────────────────
+        audio_float, sr = await self._tts.synthesize(text)
+        audio_int16 = (np.clip(audio_float, -1.0, 1.0) * 32_767).astype(np.int16)
 
-            # Render avatar video (can be slow on CPU)
-            rendered = await self._avatar.render(audio_path, video_path)
-            logger.info("Avatar rendered: %s", rendered)
+        # Write WAV to a temp file for the avatar renderer
+        tmp_dir = tempfile.mkdtemp(prefix="avatar_")
+        audio_path = str(Path(tmp_dir) / "reply.wav")
+        import scipy.io.wavfile as wav_io  # noqa: PLC0415
+        wav_io.write(audio_path, sr, audio_int16)
 
-            # Push to OBS
-            if self._obs is not None:
-                await self._obs.update_source(rendered)
+        # ── Start avatar render in background ─────────────────────────────────
+        render_task = asyncio.create_task(
+            self._render_and_stream_video(audio_path, tmp_dir)
+        )
 
-            # Also publish audio to LiveKit room
-            audio, sr = await self._tts.synthesize(text)
-            audio_int16 = (np.clip(audio, -1.0, 1.0) * 32_767).astype(np.int16)
-            chunk_size = sr // 10  # 100ms
+        # ── Stream audio to LiveKit immediately (no waiting for render) ───────
+        chunk_size = sr // 10  # 100ms chunks
+        for start in range(0, len(audio_int16), chunk_size):
+            chunk = audio_int16[start : start + chunk_size]
+            if len(chunk) < chunk_size:
+                chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+            frame = rtc.AudioFrame(
+                data=chunk.tobytes(),
+                sample_rate=sr,
+                num_channels=1,
+                samples_per_channel=len(chunk),
+            )
+            await self._audio_source.capture_frame(frame)
+            await asyncio.sleep(len(chunk) / sr)
 
-            for start in range(0, len(audio_int16), chunk_size):
-                chunk = audio_int16[start : start + chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
-                frame = rtc.AudioFrame(
-                    data=chunk.tobytes(),
-                    sample_rate=sr,
-                    num_channels=1,
-                    samples_per_channel=len(chunk),
-                )
-                await self._audio_source.capture_frame(frame)
-                await asyncio.sleep(len(chunk) / sr)
+        # Wait for render to finish (video may still be streaming to vcam)
+        try:
+            await render_task
+        except Exception:
+            logger.exception("Avatar render/stream failed — audio was still delivered")
+
+    async def _render_and_stream_video(self, audio_path: str, output_dir: str) -> None:
+        """Render avatar video and stream it to virtual camera + OBS."""
+        rendered = await self._avatar.render(audio_path, output_dir)
+        if not rendered:
+            return
+
+        logger.info("Avatar rendered: %s", rendered)
+
+        # Stream to virtual camera (pyvirtualcam)
+        if self._vcam is not None:
+            await self._vcam.stream_video(rendered)
+
+        # Push to OBS (legacy path)
+        if self._obs is not None:
+            await self._obs.update_source(rendered)
 
 
 # ── LiveKit worker entrypoint ──────────────────────────────────────────────────

@@ -104,6 +104,12 @@ ai-avatar brain             # Switch between Gemma and Claude
 ai-avatar test-pipeline     # Test the full pipeline locally
 ai-avatar check-deps        # Verify everything is installed
 ai-avatar generate-token    # Generate a token for phone/remote access
+ai-avatar avatar enable     # Enable lip-sync avatar video
+ai-avatar avatar disable    # Disable avatar (audio-only)
+ai-avatar avatar set-photo  # Set avatar source photo
+ai-avatar avatar test       # Test avatar rendering pipeline
+ai-avatar avatar status     # Check avatar config and readiness
+ai-avatar avatar-setup      # Guided avatar setup
 ```
 
 ---
@@ -145,16 +151,72 @@ ai-avatar generate-token --room my-meeting --identity phone
 
 ---
 
-## Phase 2 — talking avatar video (coming)
+## Phase 2 — talking avatar video
 
-Give the AI a face. Drop in a photo, and it lip-syncs the responses using SadTalker or LivePortrait, streamed through OBS Virtual Camera into Zoom/Meet as your webcam.
+Give the AI a face. Drop in a photo, and it lip-syncs the responses using SadTalker or LivePortrait, streamed through a virtual camera into Zoom/Meet as your webcam.
 
-Enable in `config.yaml`:
-```yaml
-avatar:
-  enabled: true
-  photo_path: ./assets/avatar.jpg
 ```
+AI speaks (TTS audio)
+        ↓
+SadTalker renders lip-synced video from your photo
+        ↓
+Video streams to pyvirtualcam (OBS Virtual Camera)
+        ↓
+Zoom/Meet sees it as your webcam
+```
+
+### Quick start
+
+```bash
+# 1. Install avatar dependencies
+pip install -e ".[avatar]"
+
+# 2. Set your photo (front-facing, min 256×256)
+ai-avatar avatar set-photo ~/Pictures/headshot.jpg
+
+# 3. Enable avatar
+ai-avatar avatar enable
+
+# 4. Download SadTalker model (one-time)
+./scripts/setup_models.sh
+
+# 5. Test it
+ai-avatar avatar test
+
+# 6. Join a meeting — avatar appears as your webcam
+ai-avatar join my-meeting
+```
+
+Or run the full guided setup:
+```bash
+ai-avatar avatar-setup
+```
+
+### How the virtual camera works
+
+On **macOS**: pyvirtualcam uses OBS Virtual Camera. You need OBS Studio installed (but it doesn't need to be running). The avatar appears as "OBS Virtual Camera" in Zoom/Meet camera settings.
+
+On **Linux**: pyvirtualcam uses v4l2loopback. Install it with your package manager.
+
+### Avatar commands
+
+```bash
+ai-avatar avatar enable        # Turn on lip-sync video
+ai-avatar avatar disable       # Back to audio-only
+ai-avatar avatar set-photo X   # Set avatar source photo
+ai-avatar avatar test          # Test the full render pipeline
+ai-avatar avatar status        # Check config and readiness
+ai-avatar avatar-setup         # Guided setup (photo + deps + models)
+```
+
+### Rendering engines
+
+| Engine | Speed | Quality | Notes |
+|--------|-------|---------|-------|
+| **SadTalker** (default) | 30-120s/utterance on CPU | Good | Stable, well-tested |
+| **LivePortrait** | Varies | Higher | Experimental, may need more compute |
+
+Switch in `config.yaml` under `avatar.model`.
 
 ---
 
@@ -191,14 +253,15 @@ Claude handles everything — setup, joining, voice changes, status checks.
 ```
 ai-meeting-avatar/
 ├── src/ai_meeting_avatar/       # Python package
-│   ├── main.py                  # CLI commands
+│   ├── main.py                  # CLI commands (join, brain, avatar, etc.)
 │   ├── orchestrator.py          # LiveKit agent pipeline
 │   ├── stt.py                   # Speech-to-text (Whisper)
 │   ├── llm.py                   # Local LLM (Gemma 4)
 │   ├── llm_claude.py            # Cloud LLM (Claude API)
 │   ├── tts.py                   # Text-to-speech (Kokoro)
 │   ├── config.py                # Configuration
-│   └── avatar.py                # Lip-sync rendering (Phase 2)
+│   └── avatar.py                # Lip-sync rendering + virtual camera
+├── assets/                      # Avatar photos (avatar.jpg)
 ├── .claude/skills/              # Claude Code skill
 ├── config.yaml                  # All settings
 ├── scripts/                     # Setup and launch helpers
