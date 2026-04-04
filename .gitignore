@@ -45,3 +45,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Claude Code internals
+.claude/
+
+# Compiler profiling artifacts
+*.profraw
