@@ -3,7 +3,7 @@ name = "ai-meeting-avatar"
 version = "0.1.0"
 description = "Local AI meeting avatar agent — joins calls, listens, and responds with a cloned voice"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "AI Meeting Avatar" }]
 

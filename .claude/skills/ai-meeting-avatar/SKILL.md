@@ -33,7 +33,10 @@ Use the state output above to branch:
 | State | Action |
 |-------|--------|
 | `PROJECT=missing` | Tell user: "Can't find the ai-meeting-avatar project. Make sure you're in the right directory." Stop. |
+| `PYTHON=missing` | Tell user: "Python 3.11–3.13 is required (3.14+ is too new for the TTS engine). Install with: `brew install python@3.13`" Stop. |
+| `PYTHON=incompatible (...)` | Tell user the version found and that they need 3.11–3.13. Run: `brew install python@3.13` |
 | `VENV=missing` | Run **Venv Setup** below, then re-invoke skill. |
+| `VENV=wrong_python (...)` | Delete and recreate venv: `rm -rf .venv` then run **Venv Setup**. |
 | `SETUP_COMPLETE=False` | Run **First-Run Onboarding**. |
 | `BACKEND=gemma` AND `GEMMA_MODEL=missing` | Run **First-Run Onboarding**. |
 | `BACKEND=claude` AND `ANTHROPIC_KEY=missing` | Tell user: "Claude backend needs an API key. Paste your key and I'll save it to .env." Then `echo "ANTHROPIC_API_KEY=THE_KEY" >> .env` |
@@ -55,14 +58,22 @@ If `$ARGUMENTS` is provided, handle as a command:
 
 ## Venv Setup
 
+Use the `PYTHON` value from the state check to pick the right binary.
+The project requires Python 3.11–3.13 (3.14+ breaks kokoro-onnx TTS).
+
 ```bash
-python3.11 -m venv .venv
+# Use whichever compatible Python the state check found
+# Try in order: python3.13, python3.12, python3.11
+for py in python3.13 python3.12 python3.11; do
+  if command -v "$py" >/dev/null 2>&1; then PYTHON="$py"; break; fi
+done
+$PYTHON -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip -q
 pip install -e . -q
 ```
 
-If Python 3.11 missing: `brew install python@3.11`
+If no compatible Python is found: `brew install python@3.13`
 
 ---
 

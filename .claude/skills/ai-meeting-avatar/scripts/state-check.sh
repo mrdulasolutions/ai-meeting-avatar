@@ -14,9 +14,46 @@ if [ ! -f "$PROJECT/pyproject.toml" ]; then
 fi
 cd "$PROJECT"
 
+# ── Find compatible Python (3.11–3.13, kokoro-onnx doesn't support 3.14+) ──
+COMPATIBLE_PYTHON=""
+for candidate in python3.13 python3.12 python3.11; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    COMPATIBLE_PYTHON="$candidate"
+    break
+  fi
+done
+
+# Fall back to python3 if it's in the right range
+if [ -z "$COMPATIBLE_PYTHON" ] && command -v python3 >/dev/null 2>&1; then
+  PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
+  PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
+  if [ "$PY_MINOR" -ge 11 ] && [ "$PY_MINOR" -le 13 ] 2>/dev/null; then
+    COMPATIBLE_PYTHON="python3"
+  fi
+fi
+
+if [ -n "$COMPATIBLE_PYTHON" ]; then
+  PY_FULL=$($COMPATIBLE_PYTHON --version 2>&1 | awk '{print $2}')
+  echo "PYTHON=$COMPATIBLE_PYTHON ($PY_FULL)"
+else
+  # Check if they have python3 but wrong version
+  if command -v python3 >/dev/null 2>&1; then
+    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+    echo "PYTHON=incompatible ($PY_VER — need 3.11–3.13)"
+  else
+    echo "PYTHON=missing"
+  fi
+fi
+
 # Venv?
 if [ -f ".venv/bin/activate" ]; then
-  echo "VENV=ok"
+  VENV_PY=$(.venv/bin/python --version 2>&1 | awk '{print $2}' || echo "unknown")
+  VENV_MINOR=$(echo "$VENV_PY" | cut -d. -f2)
+  if [ "$VENV_MINOR" -ge 11 ] && [ "$VENV_MINOR" -le 13 ] 2>/dev/null; then
+    echo "VENV=ok ($VENV_PY)"
+  else
+    echo "VENV=wrong_python ($VENV_PY — need 3.11–3.13)"
+  fi
 else
   echo "VENV=missing"
 fi
@@ -33,13 +70,15 @@ else
   echo "CONFIG=missing"
 fi
 
-# Prefs (use venv python if available, fall back to system python3)
-PYTHON="python3"
+# Prefs (use venv python if available, fall back to compatible python)
+PYTHON_CMD="python3"
 if [ -f ".venv/bin/python" ]; then
-  PYTHON=".venv/bin/python"
+  PYTHON_CMD=".venv/bin/python"
+elif [ -n "$COMPATIBLE_PYTHON" ]; then
+  PYTHON_CMD="$COMPATIBLE_PYTHON"
 fi
 
-$PYTHON - <<'PYEOF'
+$PYTHON_CMD - <<'PYEOF'
 import json, os
 from pathlib import Path
 

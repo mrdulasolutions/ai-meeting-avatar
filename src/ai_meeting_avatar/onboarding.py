@@ -70,13 +70,35 @@ def _step(number: int, total: int, title: str) -> None:
 # ── Steps ──────────────────────────────────────────────────────────────────────
 
 
+def step_check_python() -> None:
+    """Verify Python version is compatible (3.11–3.13). Abort early if not."""
+    v = sys.version_info
+    console.print(f"  Python {v.major}.{v.minor}.{v.micro}")
+    if v.minor < 11:
+        _fail(
+            f"Python {v.major}.{v.minor} is too old. Need 3.11–3.13.\n"
+            "  Install:  [cyan]brew install python@3.13[/cyan]"
+        )
+        sys.exit(1)
+    if v.minor >= 14:
+        _fail(
+            f"Python {v.major}.{v.minor} is too new — kokoro-onnx (TTS engine) "
+            "doesn't support it yet.\n"
+            "  Need Python 3.11–3.13. Install:  [cyan]brew install python@3.13[/cyan]\n"
+            "  Then recreate the venv:  [cyan]python3.13 -m venv .venv[/cyan]"
+        )
+        sys.exit(1)
+    _ok(f"Python {v.major}.{v.minor}.{v.micro} — compatible")
+
+
 def step_welcome() -> None:
     console.print(
         Panel.fit(
             "[bold white]AI Meeting Avatar[/bold white]\n"
             "[dim]Local voice agent for Google Meet & Zoom[/dim]\n\n"
             "This wizard sets everything up in [bold]5 minutes[/bold].\n"
-            "No voice recording, no GPU needed.",
+            "No voice recording, no GPU needed.\n"
+            "[dim]Requires Python 3.11–3.13 (not 3.14+)[/dim]",
             title="[bold cyan]Welcome[/bold cyan]",
             border_style="cyan",
             padding=(1, 4),
@@ -786,6 +808,9 @@ def step_summary(
 async def run_onboarding() -> None:
     """Run the full interactive onboarding wizard."""
     step_welcome()
+
+    # Step 0 — Python version (abort early if incompatible)
+    step_check_python()
 
     # Step 1 — deps (renumbered; step_check_deps still prints its own header)
     deps_ok = step_check_deps()
