@@ -182,8 +182,11 @@ class KokoroTTS:
         audio, sr = await self.synthesize(text, voice, lang)
         audio_int16 = (np.clip(audio, -1.0, 1.0) * 32_767).astype(np.int16)
         buf = io.BytesIO()
-        wav_io.write(buf, sr, audio_int16)
-        return buf.getvalue()
+        try:
+            wav_io.write(buf, sr, audio_int16)
+            return buf.getvalue()
+        finally:
+            buf.close()
 
     async def synthesize_to_pcm_int16(
         self,

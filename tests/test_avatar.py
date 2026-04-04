@@ -210,9 +210,8 @@ class TestCreateRenderer:
         assert isinstance(renderer, LivePortraitRenderer)
 
     def test_unknown_model_raises(self):
-        config = AvatarConfig(enabled=True, model="unknown")
-        with pytest.raises(ValueError, match="Unknown avatar model"):
-            create_renderer(config)
+        with pytest.raises(Exception, match="sadtalker.*liveportrait"):
+            AvatarConfig(enabled=True, model="unknown")
 
     def test_create_virtual_camera_disabled(self):
         config = AvatarConfig(enabled=False)

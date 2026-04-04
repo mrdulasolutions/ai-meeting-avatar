@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import scipy.io.wavfile as wav_io
 from livekit import rtc
 
 from .avatar import (
@@ -181,9 +182,14 @@ class MeetingAvatarAgent:
         room.on("disconnected", lambda: disconnected.set())
         await disconnected.wait()
 
-        # Cleanup virtual camera on disconnect
+        # Cleanup virtual camera and OBS on disconnect
         if self._vcam is not None:
             await self._vcam.stop()
+        if self._obs is not None:
+            try:
+                await self._obs.disconnect()
+            except Exception:
+                logger.debug("OBS disconnect failed (may already be closed).")
 
         logger.info("Room disconnected — agent shutting down.")
 
@@ -245,6 +251,8 @@ class MeetingAvatarAgent:
         logger.info("[STT] %s", text)
 
         # ── LLM ────────────────────────────────────────────────────────────────
+        # Add user message before LLM call so the model sees the full context
+        self._history.add_user(text)
         try:
             reply = await self._llm.chat(self._history, text)
         except Exception:
@@ -254,8 +262,6 @@ class MeetingAvatarAgent:
         reply = reply.strip()
         logger.info("[LLM] %s", reply)
 
-        # Update history after a successful round-trip
-        self._history.add_user(text)
         self._history.add_assistant(reply)
 
         # ── TTS ────────────────────────────────────────────────────────────────
@@ -303,37 +309,36 @@ class MeetingAvatarAgent:
         audio_float, sr = await self._tts.synthesize(text)
         audio_int16 = (np.clip(audio_float, -1.0, 1.0) * 32_767).astype(np.int16)
 
-        # Write WAV to a temp file for the avatar renderer
-        tmp_dir = tempfile.mkdtemp(prefix="avatar_")
-        audio_path = str(Path(tmp_dir) / "reply.wav")
-        import scipy.io.wavfile as wav_io  # noqa: PLC0415
-        wav_io.write(audio_path, sr, audio_int16)
+        # Write WAV to a temp directory for the avatar renderer (cleaned up after)
+        with tempfile.TemporaryDirectory(prefix="avatar_") as tmp_dir:
+            audio_path = str(Path(tmp_dir) / "reply.wav")
+            wav_io.write(audio_path, sr, audio_int16)
 
-        # ── Start avatar render in background ─────────────────────────────────
-        render_task = asyncio.create_task(
-            self._render_and_stream_video(audio_path, tmp_dir)
-        )
-
-        # ── Stream audio to LiveKit immediately (no waiting for render) ───────
-        chunk_size = sr // 10  # 100ms chunks
-        for start in range(0, len(audio_int16), chunk_size):
-            chunk = audio_int16[start : start + chunk_size]
-            if len(chunk) < chunk_size:
-                chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
-            frame = rtc.AudioFrame(
-                data=chunk.tobytes(),
-                sample_rate=sr,
-                num_channels=1,
-                samples_per_channel=len(chunk),
+            # ── Start avatar render in background ─────────────────────────────
+            render_task = asyncio.create_task(
+                self._render_and_stream_video(audio_path, tmp_dir)
             )
-            await self._audio_source.capture_frame(frame)
-            await asyncio.sleep(len(chunk) / sr)
 
-        # Wait for render to finish (video may still be streaming to vcam)
-        try:
-            await render_task
-        except Exception:
-            logger.exception("Avatar render/stream failed — audio was still delivered")
+            # ── Stream audio to LiveKit immediately (no render delay) ─────────
+            chunk_size = sr // 10  # 100ms chunks
+            for start in range(0, len(audio_int16), chunk_size):
+                chunk = audio_int16[start : start + chunk_size]
+                if len(chunk) < chunk_size:
+                    chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+                frame = rtc.AudioFrame(
+                    data=chunk.tobytes(),
+                    sample_rate=sr,
+                    num_channels=1,
+                    samples_per_channel=len(chunk),
+                )
+                await self._audio_source.capture_frame(frame)
+                await asyncio.sleep(len(chunk) / sr)
+
+            # Wait for render to finish (video may still be streaming to vcam)
+            try:
+                await render_task
+            except Exception:
+                logger.exception("Avatar render/stream failed — audio was still delivered")
 
     async def _render_and_stream_video(self, audio_path: str, output_dir: str) -> None:
         """Render avatar video and stream it to virtual camera + OBS."""

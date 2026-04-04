@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Sub-configs ────────────────────────────────────────────────────────────────
@@ -68,6 +68,20 @@ class LLMConfig(BaseModel):
     # "claude" — Anthropic Claude API (smarter, needs ANTHROPIC_API_KEY)
     backend: str = "gemma"
 
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        if v.lower() not in ("gemma", "claude"):
+            raise ValueError(f"llm.backend must be 'gemma' or 'claude', got '{v}'")
+        return v.lower()
+
+    @field_validator("temperature")
+    @classmethod
+    def _validate_temperature(cls, v: float) -> float:
+        if not 0.0 <= v <= 2.0:
+            raise ValueError(f"llm.temperature must be 0.0–2.0, got {v}")
+        return v
+
     # ── Gemma (local) settings ─────────────────────────────────────────────────
     # Model variant: "e2b" (lightweight ~2.6 GB) or "e4b" (higher quality ~4 GB)
     model_variant: str = "e2b"
@@ -107,6 +121,13 @@ class TTSConfig(BaseModel):
     # British English:  bf_emma, bf_isabella, bm_george, bm_lewis  (set lang to "en-gb")
     voice: str = "af_heart"
     speed: float = 1.0
+
+    @field_validator("speed")
+    @classmethod
+    def _validate_speed(cls, v: float) -> float:
+        if not 0.1 <= v <= 5.0:
+            raise ValueError(f"tts.speed must be 0.1–5.0, got {v}")
+        return v
     lang: str = "en-us"
     # Directory where kokoro-v1.0.onnx and voices-v1.0.bin are stored
     model_dir: str = "./models/kokoro"
@@ -118,6 +139,29 @@ class AvatarConfig(BaseModel):
     enabled: bool = False
     photo_path: str = "./assets/avatar.jpg"
     model: str = "sadtalker"
+
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, v: str) -> str:
+        if v.lower() not in ("sadtalker", "liveportrait"):
+            raise ValueError(f"avatar.model must be 'sadtalker' or 'liveportrait', got '{v}'")
+        return v.lower()
+
+    @field_validator("camera_output")
+    @classmethod
+    def _validate_camera_output(cls, v: str) -> str:
+        if v.lower() not in ("auto", "pyvirtualcam", "obs", "none"):
+            raise ValueError(
+                f"avatar.camera_output must be 'auto', 'pyvirtualcam', 'obs', or 'none', got '{v}'"
+            )
+        return v.lower()
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, v: str) -> str:
+        if v.lower() not in ("cpu", "cuda", "mps"):
+            raise ValueError(f"avatar.device must be 'cpu', 'cuda', or 'mps', got '{v}'")
+        return v.lower()
     sadtalker_path: str = "./models/SadTalker"
     liveportrait_path: str = "./models/LivePortrait"
     output_fps: int = 25

@@ -265,6 +265,7 @@ class SadTalkerRenderer(AvatarRenderer):
             capture_output=True,
             text=True,
             cwd=str(self._sadtalker_path),
+            timeout=300,
         )
 
         elapsed = time.monotonic() - t0
@@ -362,6 +363,7 @@ class LivePortraitRenderer(AvatarRenderer):
             capture_output=True,
             text=True,
             cwd=str(self._liveportrait_path),
+            timeout=300,
         )
 
         elapsed = time.monotonic() - t0
@@ -489,30 +491,32 @@ class VirtualCamera:
             logger.error("Cannot open video: %s", video_path)
             return
 
-        video_fps = cap.get(cv2.CAP_PROP_FPS) or self._fps
-        frame_delay = 1.0 / video_fps
-        frame_count = 0
+        try:
+            video_fps = cap.get(cv2.CAP_PROP_FPS) or self._fps
+            frame_delay = 1.0 / video_fps
+            frame_count = 0
 
-        logger.info("Streaming avatar video (%s) to virtual camera at %.0f FPS …", video_path, video_fps)
+            logger.info("Streaming avatar video (%s) to virtual camera at %.0f FPS …", video_path, video_fps)
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # OpenCV reads as BGR — convert to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # OpenCV reads as BGR — convert to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Resize to virtual camera dimensions
-            if frame_rgb.shape[:2] != (self._height, self._width):
-                frame_rgb = cv2.resize(frame_rgb, (self._width, self._height))
+                # Resize to virtual camera dimensions
+                if frame_rgb.shape[:2] != (self._height, self._width):
+                    frame_rgb = cv2.resize(frame_rgb, (self._width, self._height))
 
-            self._cam.send(frame_rgb)
-            frame_count += 1
-            time.sleep(frame_delay)
+                self._cam.send(frame_rgb)
+                frame_count += 1
+                time.sleep(frame_delay)
 
-        cap.release()
-        logger.info("Streamed %d video frames to virtual camera.", frame_count)
+            logger.info("Streamed %d video frames to virtual camera.", frame_count)
+        finally:
+            cap.release()
 
         # Return to idle frame
         if self._idle_frame is not None:
@@ -580,6 +584,16 @@ class OBSVirtualCamera:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._update_sync, video_path)
 
+    async def disconnect(self) -> None:
+        """Close the OBS WebSocket connection."""
+        if self._ws is not None:
+            try:
+                self._ws.disconnect()
+            except Exception:
+                pass
+            self._ws = None
+            logger.info("Disconnected from OBS WebSocket.")
+
     def _update_sync(self, video_path: str) -> None:
         self._ws.set_input_settings(
             name=self._source_name,
@@ -635,7 +649,7 @@ def create_virtual_camera(config) -> Optional[VirtualCamera]:
         except Exception as exc:
             logger.warning("Cannot create virtual camera: %s", exc)
             if config.camera_output == "auto":
-                logger.info("Falling back to OBS WebSocket output.")
+                logger.info("pyvirtualcam unavailable — continuing without virtual camera.")
                 return None
             raise
 

@@ -160,27 +160,22 @@ async def _test_pipeline(config_path: str, duration: int, forced_text: str | Non
     from rich.console import Console  # noqa: PLC0415
 
     from .config import load_config  # noqa: PLC0415
-    from .llm import ChatHistory, GemmaLLM  # noqa: PLC0415
+    from .llm import ChatHistory  # noqa: PLC0415
+    from .orchestrator import _build_llm  # noqa: PLC0415
     from .stt import WhisperSTT  # noqa: PLC0415
     from .tts import KokoroTTS  # noqa: PLC0415
 
     console = Console()
     cfg = load_config(config_path)
 
-    # Initialise components
+    # Initialise components — use the LLM factory so brain selection is respected
     stt = WhisperSTT(
         model_size=cfg.stt.model_size,
         device=cfg.stt.device,
         compute_type=cfg.stt.compute_type,
         language=cfg.stt.language,
     )
-    llm = GemmaLLM(
-        model_path=cfg.llm.model_path,
-        system_prompt=cfg.agent.system_prompt,
-        enable_tools=cfg.llm.enable_tools,
-        max_tokens=cfg.llm.max_tokens,
-        temperature=cfg.llm.temperature,
-    )
+    llm = _build_llm(cfg)
     tts = KokoroTTS(
         voice=cfg.tts.voice,
         speed=cfg.tts.speed,
@@ -752,7 +747,7 @@ def _set_avatar_config(config_path: str, key: str, value: str) -> None:
 
     text = cfg_file.read_text()
     pattern = rf"^(\s*{re.escape(key)}:\s*).*$"
-    new_text = re.sub(pattern, rf"\g<1>{value}", text, flags=re.MULTILINE)
+    new_text = re.sub(pattern, rf"\g<1>{value}", text, flags=re.MULTILINE, count=1)
 
     if new_text == text:
         click.echo(f"Warning: key '{key}' not found in {config_path}")
