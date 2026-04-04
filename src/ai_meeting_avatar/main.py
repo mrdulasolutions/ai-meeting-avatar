@@ -115,6 +115,16 @@ def join(
     click.echo(
         f"Joining room '{cfg.livekit.room or '(auto)'}' at {cfg.livekit.url} …"
     )
+
+    # livekit-agents uses Typer and re-parses sys.argv directly.
+    # Replace argv so it sees its own 'start' subcommand rather than ours.
+    sys.argv = [
+        "ai-avatar",
+        "start",
+        "--url", cfg.livekit.url,
+        "--api-key", cfg.livekit.api_key,
+        "--api-secret", cfg.livekit.api_secret,
+    ]
     agent_cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
 
 

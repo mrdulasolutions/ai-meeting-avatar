@@ -163,10 +163,12 @@ LLM_BACKEND=claude ai-avatar join my-room
 ### Start LiveKit (local dev)
 
 ```bash
-docker run --rm -p 7880:7880 -p 7881:7881 \
-  -e LIVEKIT_KEYS="devkey: secret" \
-  livekit/livekit-server --dev
+docker run --rm -d --name livekit-dev \
+  -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
+  livekit/livekit-server --dev --bind 0.0.0.0
 ```
+
+> **Important**: `--bind 0.0.0.0` is required. Without it, LiveKit binds to `127.0.0.1` only (loopback), which breaks the Docker port mapping and causes `Connection reset by peer` errors from the agent and browser clients.
 
 ### Join a room
 
@@ -209,21 +211,51 @@ ai-avatar generate-token --room my-room --identity avatar-agent
 
 ---
 
-## Google Meet / Zoom integration
+## Architecture note: LiveKit rooms, not direct Meet/Zoom dial-in
 
-LiveKit does not natively bridge to Google Meet or Zoom. There are two approaches:
+**The agent does NOT connect directly to a Google Meet or Zoom meeting URL.** It joins a LiveKit room — a separate real-time media server. Audio is then routed from the LiveKit room to Meet/Zoom through a virtual audio device on your computer.
 
-### Option A — LiveKit SIP Bridge (recommended for Zoom)
+This is an important distinction:
+- `ai-avatar join my-room` connects to **your LiveKit server** (local Docker or cloud)
+- To hear the avatar in Google Meet, you route the LiveKit audio output through a virtual mic (BlackHole on macOS) and select that mic in Meet
+- Direct dial-in to Google Meet (e.g. via Puppeteer or a Meet bot) is a planned roadmap item
+
+### Current integration options
+
+**Option A — Virtual audio device (recommended, works today)**
+1. Install BlackHole: `brew install blackhole-2ch`
+2. Create a Multi-Output Device in macOS Audio MIDI Setup (BlackHole + speakers)
+3. Set System Output to the Multi-Output Device
+4. Start the avatar: `ai-avatar join my-room`
+5. In Google Meet → Settings → Microphone → select **BlackHole 2ch**
+6. The avatar's voice flows: `LiveKit room → BlackHole → Google Meet mic`
+
+**Option B — LiveKit SIP Bridge (Zoom)**
 Zoom supports SIP dial-in. Point a LiveKit SIP trunk at your Zoom meeting's SIP address. The agent joins as a SIP participant.
 
-### Option B — Browser automation + virtual audio device
-1. Install a virtual audio device (e.g. BlackHole on macOS, VB-Audio on Windows).
-2. Route the LiveKit room's output audio to the virtual device.
-3. Open Google Meet / Zoom in Chrome and select the virtual device as microphone.
-4. *(Phase 2)* Install OBS Virtual Camera; it appears as a webcam in Meet/Zoom.
+**Option C — livekit-meet browser client**
+Run the open-source [livekit-meet](https://github.com/livekit-examples/meet) web app connected to the same LiveKit room — join from a browser, share screen into Google Meet.
 
-### Option C — livekit-meet browser client
-Run the open-source [livekit-meet](https://github.com/livekit-examples/meet) web app connected to the same LiveKit room — then join that URL from within a Google Meet screen share.
+### Joining from another device (phone, remote machine)
+
+The LiveKit dev server on `localhost` is only reachable from the same machine. To join from a phone or remote device you need either:
+
+**Local network**: Use your Mac's LAN IP instead of `localhost`:
+```bash
+# Find your Mac's IP
+ipconfig getifaddr en0
+
+# Join from phone via meet.livekit.io/custom/
+# URL: ws://192.168.x.x:7880
+# Token: generate with: ai-avatar generate-token --room my-room --identity user
+```
+
+Then open from the phone:
+```
+https://meet.livekit.io/custom/?liveKitUrl=ws://192.168.x.x:7880&token=<token>
+```
+
+**From anywhere (internet)**: Deploy to LiveKit Cloud or a cloud server — see [Deploying to production](#deploying-to-production) below.
 
 ---
 
@@ -248,6 +280,92 @@ obs:
 SadTalker and LivePortrait are cloned automatically by `setup_models.sh`.
 
 The rendered MP4 is pushed to an OBS **Media Source** named `"AI Avatar"` (configurable), then output through OBS Virtual Camera — which appears as a webcam in Zoom and Google Meet.
+
+---
+
+## Deploying to production
+
+For remote access (joining from a phone, another country, or embedding into a product), the LiveKit server must be publicly accessible. Two options:
+
+**LiveKit Cloud (easiest)**
+1. Sign up at [livekit.io/cloud](https://livekit.io/cloud) — has a free tier
+2. Get your cloud URL (`wss://your-project.livekit.cloud`), API key, and secret
+3. Update `config.yaml` or set env vars:
+   ```bash
+   export LIVEKIT_URL=wss://your-project.livekit.cloud
+   export LIVEKIT_API_KEY=your-key
+   export LIVEKIT_API_SECRET=your-secret
+   ```
+4. Run the agent on your Mac as normal — it connects out to the cloud server
+5. Browser/phone clients connect to the same cloud URL — no localhost needed
+
+**Self-hosted (VPS/cloud server)**
+Deploy LiveKit Server on any Linux VPS with a public IP. See the [LiveKit self-hosting docs](https://docs.livekit.io/home/self-hosting/local/).
+
+---
+
+## Known limitations
+
+- **No direct Google Meet / Zoom dial-in** — the agent joins a LiveKit room, not a Meet/Zoom meeting URL directly. Audio routing via BlackHole (macOS) is the current workaround.
+- **localhost-only by default** — the local Docker LiveKit server is not reachable from other devices or the internet without a cloud deployment or LAN IP access.
+- **First response is slow** — Gemma 4 models load on the first room join, which takes 30–120 seconds depending on hardware. Subsequent responses are much faster.
+- **macOS / Linux only** — LiteRT-LM (local Gemma 4) does not support Windows yet.
+- **No interruption handling** — the agent processes speech segments sequentially; it cannot be interrupted mid-response.
+- **CPU-only TTS** — Kokoro-ONNX runs on CPU. Real-time synthesis is fine for typical responses but very long replies may lag.
+
+---
+
+## Roadmap
+
+- [ ] **Google Meet direct join** — headless Chrome (Puppeteer) bot that joins a Meet URL and bridges audio to LiveKit, so no BlackHole setup is needed
+- [ ] **Zoom direct join** — LiveKit SIP bridge for Zoom dial-in
+- [ ] **LiveKit Cloud one-click setup** — `ai-avatar cloud-setup` command that provisions a LiveKit Cloud project and updates config automatically
+- [ ] **Windows support** — pending LiteRT-LM Windows builds
+- [ ] **Interruption handling** — barge-in / cancel-in-progress support
+- [ ] **Persistent memory** — conversation history stored across sessions
+- [ ] **Phase 2: Avatar video** — SadTalker / LivePortrait lip-sync from a photo, pushed to OBS Virtual Camera → Zoom/Meet webcam
+
+---
+
+## Bugs fixed during development
+
+These issues were discovered during live testing and have been patched:
+
+### 1. CLI `join` command — `No such command 'join'` (Click vs Typer argv conflict)
+
+**Symptom**: Running `ai-avatar join my-room` printed "Joining room…" then crashed with `No such command 'join'`.
+
+**Cause**: `livekit.agents` uses [Typer](https://typer.tiangolo.com/) internally and calls `run_app()`, which re-parses `sys.argv` from scratch. At that point `sys.argv` still contained `['ai-avatar', 'join', 'my-room', '--url', ...]`, so Typer saw `join` as an unknown subcommand (it expects `start`, `dev`, `connect`, etc.).
+
+**Fix** (`main.py`): Rewrite `sys.argv` to the livekit-agents format before calling `run_app()`:
+```python
+sys.argv = ["ai-avatar", "start", "--url", cfg.livekit.url,
+            "--api-key", cfg.livekit.api_key, "--api-secret", cfg.livekit.api_secret]
+agent_cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+```
+
+### 2. Docker LiveKit — `Connection reset by peer`
+
+**Symptom**: LiveKit container was running and ports were mapped, but the agent and browser both got `Connection reset by peer` on `ws://localhost:7880`.
+
+**Cause**: LiveKit Server defaults to `--bind 127.0.0.1` (loopback). Inside a Docker container, the loopback interface is not the same as the container's network interface (`172.17.0.2`). Docker's port mapping routes host traffic to the container's network interface — which LiveKit wasn't listening on.
+
+**Fix**: Add `--bind 0.0.0.0` to the `docker run` command so LiveKit listens on all container interfaces.
+
+### 3. Hugging Face CLI renamed (`huggingface-cli` → `hf`)
+
+**Symptom**: `setup_models.sh` calls `huggingface-cli` which is not found after installing `huggingface-hub>=0.24`.
+
+**Cause**: The CLI binary was renamed from `huggingface-cli` to `hf` in newer releases.
+
+**Fix**: Use the Python API for model downloads instead of the CLI:
+```python
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id="litert-community/gemma-4-E2B-it-litert-lm",
+                  allow_patterns=["*.litertlm", "*.json", "*.md"],
+                  local_dir="./models/gemma-4-e2b")
+```
+Or login with: `hf auth login --token $HF_TOKEN`
 
 ---
 
