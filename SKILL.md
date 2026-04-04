@@ -10,68 +10,143 @@ Activate this skill when the user says any of:
 - "start the avatar"
 - "set up the avatar"
 - "set up my meeting avatar"
-- "onboard"
-- "first time setup"
+- "onboard" / "first time setup"
+- Any slash command below
+
+---
+
+## Slash commands
+
+| Command | What it does |
+|---------|-------------|
+| `/help` | Show all commands and a quick-start guide |
+| `/join [room]` | Join a LiveKit room (asks for room name if omitted) |
+| `/join [google-meet-url]` | Route audio to a Google Meet link via BlackHole |
+| `/leave` | Stop the running avatar and disconnect from the room |
+| `/mute` | Mute the avatar's microphone in the current room |
+| `/unmute` | Unmute the avatar's microphone |
+| `/status` | Show whether the avatar is running, which room, and pipeline health |
+| `/voice` | Change the TTS voice interactively (no restart needed) |
+| `/avatar` | Set or update the avatar photo for Phase 2 lip-sync video |
 
 ---
 
 ## Decision tree
 
 ```
-User wants to join a call
+User triggers the skill
         │
-        ├── Has setup been completed?
-        │   (voice sample exists at assets/voice_samples/speaker.wav)
+        ├── First run? (models not downloaded OR prefs not saved)
         │
-        ├── NO  → run onboarding wizard first  (Step A)
+        ├── YES → conversational onboarding  (Step A)
         │
-        └── YES → join the room directly       (Step B)
+        └── NO  → join the room directly     (Step B)
 ```
 
-Check with:
+### Check for first run:
+
 ```bash
-ls assets/voice_samples/speaker.wav 2>/dev/null && echo "READY" || echo "NEEDS_SETUP"
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar.prefs import needs_first_run
+print('FIRST_RUN' if needs_first_run() else 'READY')
+"
 ```
 
 ---
 
-## Step A — First-time setup (onboarding wizard)
+## Step A — First-run onboarding (conversational, ~5 minutes)
 
 Tell the user:
-> "Let's get you set up. This takes about 5 minutes and I'll walk you through every step — just follow the prompts."
+> "Welcome! Let me get you set up — it'll take about 5 minutes and I'll handle everything. Just answer two quick questions."
 
-Then run:
+### Question 1 — Voice
+
+Say:
+> "What kind of voice do you want the avatar to use? Here are your options:"
+
+```
+1.  af_heart   — warm American female  (default)
+2.  af_sky     — bright American female
+3.  af_nova    — natural American female
+4.  am_adam    — natural American male
+5.  am_michael — deep American male
+6.  bf_emma    — British female
+7.  bm_george  — British male
+```
+
+> "Type a number (1–7) or just press Enter for the default (af_heart)."
+
+Map the choice to a voice ID and save it:
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+prefs.set('voice', 'CHOSEN_VOICE_ID')
+"
+```
+
+### Question 2 — Avatar photo (optional, Phase 2)
+
+Say:
+> "Do you want a talking avatar video (Phase 2)? If yes, drop a photo path here — or press Enter to skip for now (audio-only mode works great)."
+
+If the user provides a path:
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+prefs.set('avatar_photo', 'PATH_FROM_USER')
+"
+```
+
+### Run the setup wizard
+
 ```bash
 cd ~/Desktop/ai-meeting-avatar
-source .venv/bin/activate 2>/dev/null || python3.11 -m venv .venv && source .venv/bin/activate && pip install -e . -q
+source .venv/bin/activate 2>/dev/null || (python3.11 -m venv .venv && source .venv/bin/activate && pip install -e . -q)
 ai-avatar onboard
 ```
 
-The wizard handles everything interactively:
+The wizard handles:
 
 | Step | What happens |
 |------|-------------|
 | 1 — Dependencies | Checks and auto-installs missing packages |
-| 2 — Gemma 4 E2B | Logs into HF, downloads ~2.6 GB model (one-time) |
-| 3 — Kokoro TTS | Downloads ~80 MB voice models, plays a 2-second audio preview |
-| 4 — LiveKit | Starts the local media server via Docker |
-| 5 — Pipeline test | Runs full STT → LLM → TTS with audio playback |
-| 6 — Summary | Shows status and exact next command |
+| 2 — Gemma 4 E2B | HF login, downloads ~2.6 GB model (one-time) |
+| 3 — Kokoro TTS | Downloads ~80 MB voice models, plays a 2-second preview |
+| 4 — LiveKit | Starts local media server via Docker |
+| 5 — Pipeline test | Full STT → LLM → TTS test with audio playback |
+| 6 — Summary | Status table + exact next command |
 
-**If a step fails**, read the error shown in the terminal and handle it:
+After the wizard exits successfully, mark setup complete and save the chosen voice:
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+p = prefs.load()
+p['setup_complete'] = True
+prefs.save(p)
+"
+```
 
-- `kokoro_onnx` not found → `pip install kokoro-onnx onnxruntime` then re-run
-- HF `401` error → guide user to apply for Gemma 4 access at huggingface.co
-- Docker not found → skip LiveKit step, have them install Docker first
-- `litert_lm` not found → `pip install litert-lm-nightly` then re-run
+**If a wizard step fails**, apply the fix and re-run:
+
+| Error | Fix |
+|-------|-----|
+| `kokoro_onnx` not found | `pip install kokoro-onnx onnxruntime` |
+| HF `401` on Gemma download | Guide user: apply at huggingface.co/litert-community/gemma-4-E2B-it-litert-lm |
+| Docker not found | Skip LiveKit step — tell user to install Docker Desktop first |
+| `litert_lm` not found | `pip install litert-lm-nightly` |
 
 ---
 
 ## Step B — Join a call
 
-### Confirm LiveKit is running first:
+### 1. Make sure LiveKit is running
+
 ```bash
-curl -s http://localhost:7880 >/dev/null && echo "LiveKit OK" || echo "Start LiveKit first"
+curl -s http://localhost:7880 >/dev/null && echo "LiveKit OK" || echo "Need to start LiveKit"
 ```
 
 If not running:
@@ -82,82 +157,192 @@ docker run --rm -p 7880:7880 -p 7881:7881 \
 sleep 3
 ```
 
-### Join the room:
+### 2. Get the room name
+
+If the user said `/join my-room`, use `my-room`.
+If no room name was given, ask:
+> "What's the room name? (You can make one up — e.g., 'standup' or 'interview'.)"
+
+Save it for next time:
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
-ai-avatar join <ROOM_NAME>
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+prefs.set('last_room', 'ROOM_NAME')
+"
 ```
 
-Ask the user for the room name if they haven't given it.
+### 3. Apply saved voice preference
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+v = prefs.get('voice')
+import re, pathlib
+cfg = pathlib.Path('config.yaml').read_text()
+cfg = re.sub(r'(voice:\s*)[\"\']\S+[\"\'']', f'voice: \"{v}\"', cfg)
+pathlib.Path('config.yaml').write_text(cfg)
+"
+```
+
+### 4. Join the room
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar join ROOM_NAME
+```
+
+Tell the user:
+> "Avatar is live in room 'ROOM_NAME'. Use /status to check it, /leave to stop it."
 
 ---
 
 ## Step C — Connect to Google Meet or Zoom
 
-After the agent is running in its room, the user needs to route audio:
+After the agent is running, route audio to your call:
 
-**macOS (BlackHole virtual audio — free):**
+**macOS (BlackHole — free virtual audio):**
 ```bash
 brew install blackhole-2ch
 ```
 Then:
-1. Open **Audio MIDI Setup** → create a **Multi-Output Device** (BlackHole + speakers)
-2. In **System Settings → Sound → Output** → select the Multi-Output Device
-3. Open Google Meet → Settings → Microphone → **BlackHole 2ch**
-4. The avatar's voice flows: `LiveKit room → BlackHole → Google Meet mic`
+1. Open **Audio MIDI Setup** → create a **Multi-Output Device** (BlackHole + your speakers)
+2. **System Settings → Sound → Output** → select Multi-Output Device
+3. In Google Meet → Settings → Microphone → select **BlackHole 2ch**
+4. Avatar voice flows: `LiveKit room → BlackHole → Google Meet mic`
 
 Tell the user:
-> "Open Google Meet, go to Settings → Microphone, and select BlackHole 2ch. The avatar will speak through that mic. Done!"
+> "Open Google Meet, go to Settings → Microphone, and pick BlackHole 2ch. The avatar will speak through that mic."
+
+---
+
+## Step D — Remote control (phone or another device)
+
+The user can control the avatar from their phone or a second device without touching the terminal:
+
+1. **iMessage / Slack / any chat that triggers Claude**: Send a message like "mute avatar" or "/leave" — Claude will handle it via this skill.
+2. **Dedicated room URL**: If using [livekit-meet](https://github.com/livekit-examples/meet), point it at `ws://YOUR_MACHINE_IP:7880` — the user joins that URL from their phone, and the avatar is already in the same room.
+3. **Shortcut / Siri**: Create an iOS Shortcut that sends an HTTP request to a local webhook, or use SSH to your Mac and run `ai-avatar join ROOM_NAME`.
+
+---
+
+## Slash command handlers
+
+### `/voice`
+
+Say:
+> "Here are the available voices. Pick a number:"
+(show the same table as onboarding — af_heart, af_sky, …)
+
+Save the choice to prefs and update `config.yaml`:
+```bash
+python3 -c "... prefs.set('voice', 'NEW_VOICE') ..."
+```
+> "Voice updated. It'll take effect next time you /join a room."
+
+### `/status`
+
+Run:
+```bash
+curl -s http://localhost:7880/rtc/health 2>/dev/null && echo "LiveKit running" || echo "LiveKit stopped"
+```
+
+Report back:
+- LiveKit: running / stopped
+- Avatar process: running in room X / not running
+- Models: downloaded / missing (use `needs_first_run()`)
+- Voice: current voice from prefs
+- Last room: from prefs
+
+### `/leave`
+
+```bash
+pkill -f "ai-avatar join" && echo "Avatar stopped"
+```
+> "Avatar disconnected."
+
+### `/mute` / `/unmute`
+
+The Gemma LLM has built-in `mute_microphone()` / `unmute_microphone()` tools. Send a chat message in the LiveKit room to trigger them, or restart with `--muted` flag if supported.
+
+> For now: tell the user to use the host's mute button in Meet/Zoom, or `/leave` and `/join` again.
+
+### `/avatar`
+
+Ask:
+> "Drop the path to your photo (JPG or PNG)."
+
+Save it and enable avatar in config:
+```bash
+python3 -c "
+import sys, re, pathlib; sys.path.insert(0, 'src')
+from ai_meeting_avatar import prefs
+prefs.set('avatar_photo', 'PHOTO_PATH')
+cfg = pathlib.Path('config.yaml').read_text()
+cfg = re.sub(r'enabled:\s*false', 'enabled: true', cfg, count=1)
+cfg = re.sub(r'photo_path:.*', f'photo_path: PHOTO_PATH', cfg)
+pathlib.Path('config.yaml').write_text(cfg)
+"
+```
+> "Avatar photo saved. Phase 2 will activate next time you /join."
+
+### `/help`
+
+Print:
+```
+AI Meeting Avatar — quick reference
+────────────────────────────────────
+/join [room]   Join a LiveKit room (routes audio to Meet/Zoom via BlackHole)
+/leave         Disconnect the avatar
+/mute          Mute the avatar mic
+/unmute        Unmute the avatar mic
+/voice         Change the TTS voice
+/avatar        Set a photo for lip-sync video (Phase 2)
+/status        Check if everything is running
+/help          Show this message
+
+First time? Just say "join my meeting" and I'll walk you through setup.
+```
 
 ---
 
 ## Troubleshooting quick-reference
 
-Ask the user which symptom they're seeing, then apply the fix:
-
 | Symptom | Fix |
 |---------|-----|
-| "No speech detected" | Speak louder / closer to mic; lower `stt.vad_energy_threshold` in config.yaml |
-| Response is very slow | Switch to `stt.model_size: tiny`; Gemma E2B on Apple Silicon MPS is fastest |
-| Want a different voice | Change `tts.voice` in config.yaml — no re-download needed |
-| `FileNotFoundError: Gemma model not found` | Run `ai-avatar onboard` or `./scripts/setup_models.sh` |
-| HF `401` on model download | Apply for Gemma 4 access at huggingface.co/litert-community/gemma-4-E2B-it-litert-lm |
-| Kokoro models missing | Run `./scripts/setup_models.sh` step 3 |
+| "No speech detected" | Speak louder; lower `stt.vad_energy_threshold` in config.yaml |
+| Response is very slow | Use `stt.model_size: tiny`; Gemma E2B on Apple Silicon MPS is fastest |
+| Want a different voice | `/voice` command — no re-download needed |
+| `FileNotFoundError: Gemma model` | Run `ai-avatar onboard` or `./scripts/setup_models.sh` |
+| HF `401` on Gemma download | Apply at huggingface.co/litert-community/gemma-4-E2B-it-litert-lm |
+| Kokoro models missing | Run `./scripts/setup_models.sh` |
 | `litert_lm` not found | `pip install litert-lm-nightly` |
 | `kokoro_onnx` not found | `pip install kokoro-onnx onnxruntime` |
-| "LiveKit connection refused" | Start LiveKit (see Step B above) |
-| Can't hear avatar in Meet | BlackHole not set as mic in Meet settings |
+| "LiveKit connection refused" | Run the `docker run …` command in Step B |
+| Can't hear avatar in Meet | BlackHole not selected as mic in Meet settings |
 
 ---
 
 ## Configuration changes (edit config.yaml)
 
-Offer these when the user wants to tweak behaviour:
-
 ```yaml
-# Use the larger, higher-quality Gemma 4 E4B model
+# Higher-quality model (needs more RAM, slower to load)
 llm:
   model_variant: e4b
   model_path: ./models/gemma-4-e4b/gemma-4-E4B-it.litertlm
 
-# Disable meeting-control tools (mute/unmute) if not needed
-llm:
-  enable_tools: false
-
-# Faster STT (less accurate)
+# Faster (less accurate) speech recognition
 stt:
   model_size: tiny
 
-# Change voice (no re-download needed — all voices in voices-v1.0.bin)
+# Change voice without restarting (update prefs via /voice instead)
 tts:
-  voice: am_adam      # natural male
-  # voice: af_sky     # bright female
-  # voice: bf_emma    # British female
-  # voice: bm_george  # British male
+  voice: am_adam     # or: af_sky, af_nova, am_michael, bf_emma, bm_george
   speed: 1.0
-  lang: en-us         # or en-gb for British voices
+  lang: en-us        # en-gb for British voices
 
-# Make the avatar more concise / detailed
+# Make the avatar more concise
 agent:
   system_prompt: |
     You are attending this meeting on behalf of [Name].
@@ -169,4 +354,4 @@ To download E4B instead of E2B:
 GEMMA_VARIANT=e4b ./scripts/setup_models.sh
 ```
 
-After any config change: restart with `ai-avatar join <room>`.
+After any config change: `/leave` then `/join ROOM_NAME` to restart.
