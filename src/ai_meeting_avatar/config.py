@@ -63,6 +63,12 @@ class STTConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    # ── Backend selection ──────────────────────────────────────────────────────
+    # "gemma"  — local Gemma 4 via LiteRT-LM (offline, private, no API key)
+    # "claude" — Anthropic Claude API (smarter, needs ANTHROPIC_API_KEY)
+    backend: str = "gemma"
+
+    # ── Gemma (local) settings ─────────────────────────────────────────────────
     # Model variant: "e2b" (lightweight ~2.6 GB) or "e4b" (higher quality ~4 GB)
     model_variant: str = "e2b"
     # Path to the .litertlm weights file on disk
@@ -71,8 +77,16 @@ class LLMConfig(BaseModel):
     # Hugging Face repos for setup_models.sh
     hf_repo_e2b: str = "litert-community/gemma-4-E2B-it-litert-lm"
     hf_repo_e4b: str = "litert-community/gemma-4-E4B-it-litert-lm"
+
+    # ── Claude (cloud) settings ────────────────────────────────────────────────
+    # API key — prefer ANTHROPIC_API_KEY env var over storing here
+    anthropic_api_key: str = ""
+    # Model to use; see https://docs.anthropic.com/en/docs/about-claude/models
+    claude_model: str = "claude-sonnet-4-6"
+
+    # ── Shared settings ────────────────────────────────────────────────────────
     temperature: float = 0.7
-    max_tokens: int = 256
+    max_tokens: int = 512
     enable_tools: bool = True
     history_turns: int = 10
 
@@ -80,6 +94,10 @@ class LLMConfig(BaseModel):
     def _override_from_env(self) -> "LLMConfig":
         if path := os.getenv("GEMMA_MODEL_PATH"):
             self.model_path = path
+        if key := os.getenv("ANTHROPIC_API_KEY"):
+            self.anthropic_api_key = key
+        if backend := os.getenv("LLM_BACKEND"):
+            self.backend = backend
         return self
 
 

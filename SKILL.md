@@ -26,6 +26,7 @@ Activate this skill when the user says any of:
 | `/mute` | Mute the avatar's microphone in the current room |
 | `/unmute` | Unmute the avatar's microphone |
 | `/status` | Show whether the avatar is running, which room, and pipeline health |
+| `/brain` | Switch the LLM between local Gemma 4 and cloud Claude |
 | `/voice` | Change the TTS voice interactively (no restart needed) |
 | `/avatar` | Set or update the avatar photo for Phase 2 lip-sync video |
 
@@ -229,6 +230,29 @@ The user can control the avatar from their phone or a second device without touc
 
 ## Slash command handlers
 
+### `/brain`
+
+```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+ai-avatar brain
+```
+
+Or switch directly without prompting:
+```bash
+ai-avatar brain --set claude    # switch to Claude API
+ai-avatar brain --set gemma     # switch back to Gemma 4 (local)
+```
+
+After switching to Claude, remind the user:
+> "Set your Anthropic API key: `export ANTHROPIC_API_KEY=sk-ant-...`
+> Or add it to .env: `ANTHROPIC_API_KEY=sk-ant-...`
+> Install the SDK if needed: `pip install -e '.[claude]'`"
+
+After switching to Gemma:
+> "Gemma runs fully offline — no API key needed."
+
+> "Brain switched. Restart the avatar (`/leave` then `/join`) to apply the change."
+
 ### `/voice`
 
 Say:
@@ -297,6 +321,7 @@ AI Meeting Avatar — quick reference
 /leave         Disconnect the avatar
 /mute          Mute the avatar mic
 /unmute        Unmute the avatar mic
+/brain         Switch LLM between Gemma 4 (local) and Claude (cloud)
 /voice         Change the TTS voice
 /avatar        Set a photo for lip-sync video (Phase 2)
 /status        Check if everything is running
@@ -321,6 +346,8 @@ First time? Just say "join my meeting" and I'll walk you through setup.
 | `kokoro_onnx` not found | `pip install kokoro-onnx onnxruntime` |
 | "LiveKit connection refused" | Run the `docker run …` command in Step B |
 | Can't hear avatar in Meet | BlackHole not selected as mic in Meet settings |
+| Claude `anthropic` not found | `pip install -e ".[claude]"` |
+| Claude `AuthenticationError` | Set `ANTHROPIC_API_KEY` in `.env` or shell env |
 
 ---
 

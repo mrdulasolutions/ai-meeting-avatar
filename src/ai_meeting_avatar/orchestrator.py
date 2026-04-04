@@ -32,10 +32,42 @@ from livekit import rtc
 from .avatar import AvatarRenderer, OBSVirtualCamera, create_renderer
 from .config import AppConfig, load_config
 from .llm import ChatHistory, GemmaLLM
+from .llm_claude import ClaudeLLM
 from .stt import EnergyVAD, WhisperSTT
 from .tts import CoquiXTTS
 
 logger = logging.getLogger(__name__)
+
+
+# ── LLM factory ───────────────────────────────────────────────────────────────
+
+
+def _build_llm(config: AppConfig) -> GemmaLLM | ClaudeLLM:
+    """Return the appropriate LLM backend based on config.llm.backend."""
+    backend = config.llm.backend.lower()
+    if backend == "claude":
+        logger.info("LLM backend: Claude (%s)", config.llm.claude_model)
+        return ClaudeLLM(
+            api_key=config.llm.anthropic_api_key,
+            model=config.llm.claude_model,
+            system_prompt=config.agent.system_prompt,
+            enable_tools=config.llm.enable_tools,
+            max_tokens=config.llm.max_tokens,
+            temperature=config.llm.temperature,
+            history_turns=config.llm.history_turns,
+        )
+    if backend == "gemma":
+        logger.info("LLM backend: Gemma 4 (%s)", config.llm.model_path)
+        return GemmaLLM(
+            model_path=config.llm.model_path,
+            system_prompt=config.agent.system_prompt,
+            enable_tools=config.llm.enable_tools,
+            max_tokens=config.llm.max_tokens,
+            temperature=config.llm.temperature,
+        )
+    raise ValueError(
+        f"Unknown llm.backend: '{backend}'. Choose 'gemma' or 'claude'."
+    )
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
@@ -58,13 +90,7 @@ class MeetingAvatarAgent:
             compute_type=config.stt.compute_type,
             language=config.stt.language,
         )
-        self._llm = GemmaLLM(
-            model_path=config.llm.model_path,
-            system_prompt=config.agent.system_prompt,
-            enable_tools=config.llm.enable_tools,
-            max_tokens=config.llm.max_tokens,
-            temperature=config.llm.temperature,
-        )
+        self._llm = _build_llm(config)
         self._tts = CoquiXTTS(
             voice=config.tts.voice,
             speed=config.tts.speed,

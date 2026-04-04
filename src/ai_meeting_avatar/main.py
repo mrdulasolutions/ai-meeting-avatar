@@ -292,6 +292,100 @@ def check_deps() -> None:
         console.print("\n[bold green]All dependencies satisfied![/bold green]")
 
 
+# ── brain ──────────────────────────────────────────────────────────────────────
+
+
+@cli.command("brain")
+@click.option(
+    "--set",
+    "backend",
+    type=click.Choice(["gemma", "claude"], case_sensitive=False),
+    default=None,
+    help="Set backend directly without prompting.",
+)
+@click.pass_context
+def brain(ctx: click.Context, backend: str | None) -> None:
+    """
+    Switch the LLM brain between local Gemma 4 and cloud Claude.
+
+    Updates llm.backend in config.yaml.  The change takes effect on the
+    next  ai-avatar join  or  ai-avatar test-pipeline  invocation.
+
+    \b
+    Examples:
+        ai-avatar brain               # interactive menu
+        ai-avatar brain --set claude  # switch to Claude directly
+        ai-avatar brain --set gemma   # switch back to Gemma
+    """
+    import re  # noqa: PLC0415
+
+    from rich.console import Console as RConsole  # noqa: PLC0415
+    from rich.panel import Panel as RPanel  # noqa: PLC0415
+    from rich.prompt import Prompt as RPrompt  # noqa: PLC0415
+
+    from .config import load_config  # noqa: PLC0415
+
+    rcon = RConsole()
+    config_path = ctx.obj["config_path"]
+    cfg = load_config(config_path)
+    current = cfg.llm.backend
+
+    if backend is None:
+        rcon.print(
+            RPanel(
+                f"[white]Current brain: [bold cyan]{current}[/bold cyan]\n\n"
+                "  [bold]1) gemma[/bold]  — Local Gemma 4 (offline, private, no API key)\n"
+                "  [bold]2) claude[/bold] — Anthropic Claude (smarter, needs internet + API key)",
+                title="[bold yellow]Choose AI Brain[/bold yellow]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        rcon.print()
+        choice = RPrompt.ask(
+            "  Select brain", choices=["1", "2", "gemma", "claude"], default="1"
+        )
+        backend = "claude" if choice in ("2", "claude") else "gemma"
+
+    if backend == current:
+        click.echo(f"Already using '{backend}' — no change.")
+        return
+
+    # Update config.yaml
+    import pathlib  # noqa: PLC0415
+
+    cfg_file = pathlib.Path(config_path)
+    if cfg_file.exists():
+        text = cfg_file.read_text()
+        new_text = re.sub(
+            r"^(\s*backend:\s*).*$",
+            rf'\1"{backend}"',
+            text,
+            flags=re.MULTILINE,
+        )
+        cfg_file.write_text(new_text)
+        click.echo(f"Switched brain: {current} → {backend}  (saved to {config_path})")
+    else:
+        click.echo(f"config.yaml not found at '{config_path}'.")
+        return
+
+    # Remind about Claude-specific requirements
+    if backend == "claude":
+        rcon.print(
+            "\n[yellow]Remember:[/yellow]\n"
+            "  • Set your API key:  [cyan]export ANTHROPIC_API_KEY=sk-ant-...[/cyan]\n"
+            "  • Or add it to .env: [cyan]ANTHROPIC_API_KEY=sk-ant-...[/cyan]\n"
+            "  • Install the SDK:   [cyan]pip install -e '.[claude]'[/cyan]\n"
+        )
+    else:
+        rcon.print(
+            "\n[yellow]Remember:[/yellow]\n"
+            "  • Gemma model must be downloaded — run  [cyan]ai-avatar onboard[/cyan]  if not yet done.\n"
+        )
+
+    rcon.print("[bold green]Restart[/bold green] the avatar to apply the change.")
+
+
 # ── generate-token ─────────────────────────────────────────────────────────────
 
 

@@ -74,7 +74,7 @@ def step_welcome() -> None:
             "[bold white]AI Meeting Avatar[/bold white]\n"
             "[dim]Local voice agent for Google Meet & Zoom[/dim]\n\n"
             "This wizard sets everything up in [bold]5 minutes[/bold].\n"
-            "No voice recording, no API keys, no GPU needed.",
+            "No voice recording, no GPU needed.",
             title="[bold cyan]Welcome[/bold cyan]",
             border_style="cyan",
             padding=(1, 4),
@@ -82,6 +82,65 @@ def step_welcome() -> None:
     )
     console.print()
     Confirm.ask("  Ready to begin?", default=True)
+
+
+def step_choose_brain() -> str:
+    """Ask the user which LLM backend to use. Returns 'gemma' or 'claude'."""
+    _step(2, 6, "Choose AI brain")
+
+    console.print(
+        Panel(
+            "[white]The avatar needs an AI brain to understand and respond.\n\n"
+            "[bold]1) Local Gemma 4[/bold]  (offline, private, no API key)\n"
+            "   • Runs entirely on your machine — no data leaves your device\n"
+            "   • Requires ~2.6 GB download (one-time) + HF account with model access\n"
+            "   • Works without internet after setup\n\n"
+            "[bold]2) Claude[/bold]  (smarter, needs internet + Anthropic API key)\n"
+            "   • Much more capable — better reasoning and conversation\n"
+            "   • Requires an [cyan]Anthropic API key[/cyan] (pay-per-use)\n"
+            "   • No large model download — works instantly\n"
+            "   • Requires:  [dim]pip install -e \".[claude]\"[/dim]",
+            title="[bold yellow]Which AI brain?[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+    choice = Prompt.ask(
+        "  Choose brain",
+        choices=["1", "2"],
+        default="1",
+    )
+    backend = "claude" if choice == "2" else "gemma"
+
+    # Persist the choice to config.yaml
+    _set_config_backend(backend)
+
+    if backend == "gemma":
+        _ok("Selected: Local Gemma 4 (offline, private)")
+    else:
+        _ok("Selected: Claude (cloud, smarter)")
+
+    return backend
+
+
+def _set_config_backend(backend: str) -> None:
+    """Update llm.backend in config.yaml."""
+    import re  # noqa: PLC0415
+
+    config_path = Path("config.yaml")
+    if not config_path.exists():
+        return
+    text = config_path.read_text()
+    # Replace the backend line (handles quoted and unquoted values)
+    new_text = re.sub(
+        r"^(\s*backend:\s*).*$",
+        rf'\1"{backend}"',
+        text,
+        flags=re.MULTILINE,
+    )
+    config_path.write_text(new_text)
 
 
 def step_check_deps() -> bool:
@@ -140,7 +199,7 @@ def step_check_deps() -> bool:
 
 def step_gemma_download() -> bool:
     """Download Gemma 4 E2B weights from Hugging Face."""
-    _step(2, 5, "LLM — Gemma 4 E2B (Google AI Edge)")
+    _step(3, 6, "LLM — Gemma 4 E2B (Google AI Edge)")
 
     from .config import load_config  # noqa: PLC0415
 
@@ -240,9 +299,67 @@ def step_gemma_download() -> bool:
     return True
 
 
+def step_claude_setup() -> bool:
+    """Guide the user through setting up the Claude backend."""
+    _step(3, 6, "LLM — Claude (Anthropic API)")
+
+    import os  # noqa: PLC0415
+
+    # Check for existing key
+    existing_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if existing_key:
+        _ok(f"ANTHROPIC_API_KEY already set ({existing_key[:8]}…)")
+    else:
+        console.print(
+            Panel(
+                "[white]To use Claude you need an Anthropic API key.\n\n"
+                "  1. Create an account at [cyan]console.anthropic.com[/cyan]\n"
+                "  2. Generate an API key under Settings → API Keys\n"
+                "  3. Paste it below (stored in .env — never committed to git)",
+                title="[bold yellow]Anthropic API Key[/bold yellow]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        token = Prompt.ask("  Paste your Anthropic API key (hidden)", password=True)
+        if not token.startswith("sk-ant-"):
+            _warn("Key doesn't look like an Anthropic key (should start with sk-ant-). Continuing anyway.")
+
+        # Write to .env
+        env_path = Path(".env")
+        env_line = f"ANTHROPIC_API_KEY={token}"
+        if env_path.exists():
+            lines = [ln for ln in env_path.read_text().splitlines()
+                     if not ln.startswith("ANTHROPIC_API_KEY=")]
+            lines.append(env_line)
+            env_path.write_text("\n".join(lines) + "\n")
+        else:
+            env_path.write_text(env_line + "\n")
+        _ok("API key saved to .env")
+
+    # Check anthropic package is installed
+    try:
+        import anthropic  # noqa: PLC0415, F401
+        _ok("anthropic package installed.")
+    except ImportError:
+        _info("Installing anthropic SDK …")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", ".[claude]", "-q"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            _ok("anthropic SDK installed.")
+        else:
+            _fail("Failed to install anthropic. Run:  pip install -e '.[claude]'")
+            return False
+
+    return True
+
+
 def step_tts_setup() -> bool:
     """Download Kokoro TTS models and play a test sentence."""
-    _step(3, 5, "TTS — Kokoro voice (~80 MB)")
+    _step(4, 6, "TTS — Kokoro voice (~80 MB)")
 
     from .config import load_config  # noqa: PLC0415
     from .tts import DEFAULT_MODEL_DIR, download_models  # noqa: PLC0415
@@ -298,7 +415,7 @@ def step_tts_setup() -> bool:
 
 def step_livekit() -> bool:
     """Check if LiveKit is running; offer to start it via Docker."""
-    _step(4, 5, "LiveKit server")
+    _step(5, 6, "LiveKit server")
 
     import urllib.request  # noqa: PLC0415
 
@@ -346,7 +463,7 @@ def step_livekit() -> bool:
 
 def step_pipeline_test() -> bool:
     """Run STT → LLM → TTS end-to-end. Return True if it passes."""
-    _step(5, 5, "End-to-end test")
+    _step(6, 6, "End-to-end test")
 
     console.print("  Runs the full pipeline (loads all models on first run).")
     console.print("  [dim]May take 1-3 minutes while models initialise.[/dim]")
@@ -378,10 +495,17 @@ def step_pipeline_test() -> bool:
         return False
 
 
-def step_summary(deps_ok: bool, llm_ok: bool, tts_ok: bool, livekit_ok: bool, test_ok: bool) -> None:
+def step_summary(
+    deps_ok: bool,
+    backend: str,
+    llm_ok: bool,
+    tts_ok: bool,
+    livekit_ok: bool,
+    test_ok: bool,
+) -> None:
     """Print the final status table and next-steps panel."""
     console.print()
-    console.print(Rule("[bold cyan]Step 6/5 — You're all set![/bold cyan]"))
+    console.print(Rule("[bold cyan]Setup complete![/bold cyan]"))
     console.print()
 
     table = Table(show_header=False, box=None, padding=(0, 2))
@@ -392,7 +516,10 @@ def step_summary(deps_ok: bool, llm_ok: bool, tts_ok: bool, livekit_ok: bool, te
         table.add_row("[green]✓[/green]" if ok else "[yellow]![/yellow]", label)
 
     row(deps_ok, "Python dependencies")
-    row(llm_ok, "Gemma 4 E2B — local LLM (no server needed)")
+    if backend == "claude":
+        row(llm_ok, "Claude API — cloud LLM (Anthropic)")
+    else:
+        row(llm_ok, "Gemma 4 E2B — local LLM (no server needed)")
     row(tts_ok, "Kokoro TTS — natural voice, no cloning")
     row(livekit_ok, "LiveKit media server")
     row(test_ok, "End-to-end pipeline test")
@@ -427,18 +554,28 @@ async def run_onboarding() -> None:
     """Run the full interactive onboarding wizard."""
     step_welcome()
 
+    # Step 1 — deps (renumbered; step_check_deps still prints its own header)
     deps_ok = step_check_deps()
     if not deps_ok:
         _fail("Dependency check failed. Fix the issues above then re-run:  ai-avatar onboard")
         sys.exit(1)
 
-    llm_ok = step_gemma_download()
+    # Step 2 — choose brain
+    backend = step_choose_brain()
+
+    # Step 3 — set up chosen LLM
+    if backend == "claude":
+        llm_ok = step_claude_setup()
+    else:
+        llm_ok = step_gemma_download()
+
     tts_ok = step_tts_setup()
     livekit_ok = step_livekit()
     test_ok = step_pipeline_test()
 
     step_summary(
         deps_ok=deps_ok,
+        backend=backend,
         llm_ok=llm_ok,
         tts_ok=tts_ok,
         livekit_ok=livekit_ok,

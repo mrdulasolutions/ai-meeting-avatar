@@ -36,6 +36,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Claude API backend — alternative to local Gemma 4
+claude = [
+    "anthropic>=0.40",
+]
 # Phase 2: avatar video rendering
 avatar = [
     "torch>=2.0",

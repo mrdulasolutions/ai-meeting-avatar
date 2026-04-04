@@ -37,33 +37,46 @@ stt:
   # How many consecutive silent 20ms frames end a speech segment
   silence_frames_threshold: 50       # 50 × 20ms = 1 second
 
-# ── LLM (Google AI Edge — LiteRT-LM + Gemma 4) ───────────────────
-# LiteRT-LM runs Gemma 4 entirely in-process. No server required.
-# Models are .litertlm files downloaded from Hugging Face (gated — HF login needed).
+# ── LLM ──────────────────────────────────────────────────────────────────────
+# Two backends available — pick one:
 #
-# Model options:
-#   gemma-4-E2B  ~2.6 GB on disk, ~1.5 GB RAM with 4-bit quant  ← recommended default
-#   gemma-4-E4B  ~4+ GB on disk, ~2.5 GB RAM with 4-bit quant   ← higher quality
+#   gemma  — local Gemma 4 via LiteRT-LM (offline, private, no API key)
+#   claude — Anthropic Claude API (smarter, needs ANTHROPIC_API_KEY)
 #
-# Download with setup_models.sh or manually:
-#   huggingface-cli download litert-community/gemma-4-E2B-it-litert-lm \
-#     --local-dir ./models/gemma-4-e2b
+# Switch at any time:
+#   ai-avatar brain                         (interactive menu)
+#   LLM_BACKEND=claude ai-avatar join room  (env override, no file edit)
 llm:
-  # Which model variant to use: "e2b" (lightweight) or "e4b" (higher quality)
+  # ── Backend selection ──────────────────────────────────────────────────────
+  # "gemma" | "claude"
+  backend: "gemma"
+
+  # ── Gemma (local) ──────────────────────────────────────────────────────────
+  # LiteRT-LM runs Gemma 4 entirely in-process. No server required.
+  # Models are .litertlm files downloaded from Hugging Face (gated).
+  #
+  # Model options:
+  #   gemma-4-E2B  ~2.6 GB on disk, ~1.5 GB RAM with 4-bit quant  ← recommended
+  #   gemma-4-E4B  ~4+ GB on disk, ~2.5 GB RAM with 4-bit quant   ← higher quality
   model_variant: "e2b"
-  # Absolute or relative path to the .litertlm file.
-  # setup_models.sh places files here by default.
   model_path: "./models/gemma-4-e2b/gemma-4-E2B-it.litertlm"
-  # Fallback path if the primary model is not found
   fallback_model_path: "./models/gemma-4-e2b"
-  # Hugging Face repo to download from (used by setup_models.sh)
   hf_repo_e2b: "litert-community/gemma-4-E2B-it-litert-lm"
   hf_repo_e4b: "litert-community/gemma-4-E4B-it-litert-lm"
+
+  # ── Claude (cloud) ─────────────────────────────────────────────────────────
+  # Requires:  pip install -e ".[claude]"
+  # API key:   set ANTHROPIC_API_KEY env var (preferred) or fill in below.
+  anthropic_api_key: ""   # leave blank — read from ANTHROPIC_API_KEY env var
+  # Model — see https://docs.anthropic.com/en/docs/about-claude/models
+  claude_model: "claude-sonnet-4-6"
+
+  # ── Shared ─────────────────────────────────────────────────────────────────
   temperature: 0.7
-  max_tokens: 256
+  max_tokens: 512
   # Whether to expose meeting-control tools (mute, unmute, etc.) to the model
   enable_tools: true
-  # Keep last N turns of conversation in context (managed by LiteRT-LM internally)
+  # Keep last N turns of conversation in context
   history_turns: 10
 
 # ── Text-to-Speech (Kokoro-ONNX) ─────────────────────────────────

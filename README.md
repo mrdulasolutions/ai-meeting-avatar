@@ -37,7 +37,8 @@ Remote participant audio
 |--------|------|---------|
 | Config | `config.py` | Pydantic models, YAML + env loading |
 | STT | `stt.py` | `WhisperSTT` + `EnergyVAD` |
-| LLM | `llm.py` | `GemmaLLM` (LiteRT-LM), `ChatHistory`, meeting tools |
+| LLM (Gemma) | `llm.py` | `GemmaLLM` (LiteRT-LM), `ChatHistory`, meeting tools |
+| LLM (Claude) | `llm_claude.py` | `ClaudeLLM` (Anthropic API), same interface |
 | TTS | `tts.py` | `CoquiXTTS` with voice cloning |
 | Avatar | `avatar.py` | `SadTalkerRenderer`, `LivePortraitRenderer`, `OBSVirtualCamera` |
 | Orchestrator | `orchestrator.py` | LiveKit agent wiring STT→LLM→TTS |
@@ -49,7 +50,8 @@ Remote participant audio
 
 | Layer | Technology |
 |-------|-----------|
-| **LLM** | [Google AI Edge LiteRT-LM](https://ai.google.dev/edge/litert-lm/overview) + Gemma 4 E2B/E4B — runs in-process, no server |
+| **LLM** | [Google AI Edge LiteRT-LM](https://ai.google.dev/edge/litert-lm/overview) + Gemma 4 E2B/E4B — runs in-process, no server *(default)* |
+| **LLM (cloud)** | [Anthropic Claude API](https://docs.anthropic.com/) — smarter, needs `ANTHROPIC_API_KEY` |
 | **STT** | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — local Whisper |
 | **TTS** | [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) — 82M params, CPU-only, ~80 MB, multiple voice presets |
 | **Transport** | [LiveKit Agents](https://docs.livekit.io/agents/) — real-time media |
@@ -61,12 +63,19 @@ Remote participant audio
 
 - **Python 3.11+**
 - **Linux or macOS** (LiteRT-LM platform requirement; Windows coming soon)
-- **Hugging Face account** with Gemma 4 access approved — apply at [litert-community/gemma-4-E2B-it-litert-lm](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
 - **LiveKit server** — local dev server via Docker (see below), or any LiveKit cloud deployment
 - **ffmpeg** — for audio/video processing (`brew install ffmpeg` / `apt install ffmpeg`)
 - *(Phase 2)* **OBS Studio** with WebSocket server enabled
 
-No voice samples, no GPU, no API keys beyond Hugging Face for model download.
+**For local Gemma 4 (default):**
+- Hugging Face account with Gemma 4 access — apply at [litert-community/gemma-4-E2B-it-litert-lm](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
+- ~2.6 GB disk for E2B weights (~4 GB for E4B)
+
+**For Claude API (optional):**
+- `ANTHROPIC_API_KEY` environment variable — get one at [console.anthropic.com](https://console.anthropic.com)
+- No model download or GPU required
+
+No voice samples or GPU needed for either option.
 
 ---
 
@@ -81,8 +90,13 @@ cd ai-meeting-avatar
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 3. Install and set up everything — that's it
+# 3. Install core dependencies
 pip install -e .
+
+# Optional: add Claude API support
+pip install -e ".[claude]"
+
+# 4. Run the setup wizard
 ai-avatar onboard
 ```
 
@@ -99,8 +113,20 @@ Key fields in `config.yaml`:
 
 ```yaml
 llm:
+  # "gemma" (local, offline) or "claude" (cloud, needs API key)
+  backend: gemma
+
+  # Gemma settings (used when backend: gemma)
   model_variant: e2b     # "e2b" (~2.6 GB, fast) or "e4b" (~4 GB, higher quality)
-  enable_tools: true     # lets Gemma call mute/unmute/etc. during the call
+
+  # Claude settings (used when backend: claude)
+  claude_model: claude-sonnet-4-6   # or claude-opus-4-6, claude-haiku-4-5
+  anthropic_api_key: ""              # leave blank — set ANTHROPIC_API_KEY in env
+
+  # Shared
+  enable_tools: true     # lets the LLM call mute/unmute/etc. during the call
+  max_tokens: 512
+  history_turns: 10
 
 stt:
   model_size: base       # tiny | base | small | medium | large-v3
@@ -112,9 +138,23 @@ tts:
   lang: en-us            # en-us or en-gb
 ```
 
-The `GEMMA_MODEL_PATH` env var (set automatically by `setup_models.sh`) overrides `llm.model_path`.
+The `GEMMA_MODEL_PATH` env var overrides `llm.model_path`. `ANTHROPIC_API_KEY` and `LLM_BACKEND` env vars also override config values.
 
 Secrets go in `.env` (see `.env.example`) — they override config.yaml.
+
+#### Switching brains at any time
+
+```bash
+# Interactive menu
+ai-avatar brain
+
+# Direct switch
+ai-avatar brain --set claude
+ai-avatar brain --set gemma
+
+# One-shot env override (no file edit)
+LLM_BACKEND=claude ai-avatar join my-room
+```
 
 ---
 
@@ -231,7 +271,8 @@ ai-meeting-avatar/
 ├── src/ai_meeting_avatar/
 │   ├── config.py          # Pydantic config
 │   ├── stt.py             # WhisperSTT + EnergyVAD
-│   ├── llm.py             # OllamaLLM + ChatHistory
+│   ├── llm.py             # GemmaLLM + ChatHistory (local)
+│   ├── llm_claude.py      # ClaudeLLM — Anthropic API backend
 │   ├── tts.py             # CoquiXTTS (XTTS-v2)
 │   ├── avatar.py          # SadTalker / LivePortrait / OBS
 │   ├── orchestrator.py    # LiveKit agent + pipeline
@@ -264,6 +305,9 @@ ai-meeting-avatar/
 | LiveKit `401 Unauthorized` | API key/secret mismatch — check `.env` and LiveKit server flags |
 | `litert_lm` import error | `pip install litert-lm-nightly` |
 | `kokoro_onnx` import error | `pip install kokoro-onnx onnxruntime` |
+| `anthropic` import error | `pip install -e ".[claude]"` |
+| Claude `AuthenticationError` | Set `ANTHROPIC_API_KEY` in `.env` or shell |
+| Want to switch LLM backend | `ai-avatar brain` (interactive) or `--set gemma\|claude` |
 
 ---
 
