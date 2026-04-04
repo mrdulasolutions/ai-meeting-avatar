@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────
+# AI Meeting Avatar — Configuration
+# Copy this file and edit values for your environment.
+# Secrets can also be placed in .env (see .env.example).
+# ─────────────────────────────────────────────────────────────────
+
+agent:
+  name: "AI Meeting Avatar"
+  # Prompt injected as the system message for every conversation
+  system_prompt: |
+    You are a helpful AI meeting assistant attending this call on behalf of your user.
+    Keep responses concise and conversational — this is a live voice call.
+    Answer questions clearly and directly. Aim for 1-3 sentences unless more detail is needed.
+  language: "en"
+  # Seconds of silence before flushing buffered audio through the pipeline
+  silence_flush_seconds: 1.0
+
+# ── LiveKit ───────────────────────────────────────────────────────
+# LiveKit is used as the real-time media transport layer.
+# For Google Meet / Zoom, use a LiveKit SIP or RTMP bridge, or run
+# a LiveKit room and join via browser/plugin.
+livekit:
+  url: "ws://localhost:7880"          # LiveKit server WebSocket URL
+  api_key: "devkey"                   # Set via LIVEKIT_API_KEY env var
+  api_secret: "secret"               # Set via LIVEKIT_API_SECRET env var
+  room: ""                            # Room name (can be passed on CLI)
+
+# ── Speech-to-Text (Whisper) ─────────────────────────────────────
+stt:
+  model_size: "base"       # tiny | base | small | medium | large-v3
+  device: "cpu"            # cpu | cuda | mps (Apple Silicon)
+  compute_type: "int8"     # int8 | float16 | float32
+  language: "en"           # ISO-639-1 language code, or "auto"
+  # Energy threshold for voice-activity detection (0.0 – 1.0 scale)
+  # Lower = more sensitive, higher = only loud speech triggers pipeline
+  vad_energy_threshold: 0.02
+  # How many consecutive silent 20ms frames end a speech segment
+  silence_frames_threshold: 50       # 50 × 20ms = 1 second
+
+# ── LLM (Ollama) ─────────────────────────────────────────────────
+llm:
+  host: "http://localhost:11434"
+  model: "llama3.2"          # any model pulled via `ollama pull <model>`
+  temperature: 0.7
+  max_tokens: 256
+  # Keep last N turns of conversation in context
+  history_turns: 10
+
+# ── Text-to-Speech (Coqui XTTS-v2) ──────────────────────────────
+tts:
+  # Model identifier accepted by Coqui TTS library
+  model: "tts_models/multilingual/multi-dataset/xtts_v2"
+  # Path to a 6-30 second WAV clip of the voice to clone
+  speaker_wav: "./assets/voice_samples/speaker.wav"
+  language: "en"
+  speed: 1.0          # Speech speed multiplier
+  sample_rate: 24000  # Output sample rate (XTTS-v2 native)
+  gpu: false          # Set true if CUDA GPU is available
+
+# ── Avatar Rendering (Phase 2) ───────────────────────────────────
+avatar:
+  enabled: false
+  # Path to a still photo of the avatar (JPG/PNG, front-facing)
+  photo_path: "./assets/avatar.jpg"
+  # "sadtalker" | "liveportrait"
+  model: "sadtalker"
+  sadtalker_path: "./models/SadTalker"
+  liveportrait_path: "./models/LivePortrait"
+  output_fps: 25
+  enhancer: "gfpgan"  # face enhancer: "gfpgan" | "RestoreFormer" | null
+
+# ── OBS Virtual Camera (Phase 2) ─────────────────────────────────
+obs:
+  enabled: false
+  host: "localhost"
+  port: 4455
+  password: ""
+  source_name: "AI Avatar"  # OBS media source name to push frames to

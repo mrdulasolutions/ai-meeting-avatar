@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Env / secrets
+.env
+*.env.local
+
+# Models (large binaries — download separately)
+models/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Generated audio / video
+outputs/
+*.mp4
+*.avi
+*.mkv
+output_*.wav
+
+# Speaker voice samples (user-provided, not committed)
+assets/voice_samples/*.wav
+assets/voice_samples/*.mp3
+# Keep the directory
+!assets/voice_samples/.gitkeep
+
+# Avatar photo (user-provided)
+assets/avatar.jpg
+assets/avatar.png
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
