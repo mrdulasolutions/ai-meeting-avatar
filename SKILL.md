@@ -118,9 +118,11 @@ Ask the user which symptom they're seeing, then apply the fix:
 | Symptom | Fix |
 |---------|-----|
 | "No speech detected" | Speak louder / closer to mic; lower `stt.vad_energy_threshold` in config.yaml |
-| Response is very slow | Change `stt.model_size: tiny` and `llm.model: llama3.2:1b` in config.yaml |
+| Response is very slow | Switch to `stt.model_size: tiny`; Gemma E2B on Apple Silicon MPS is fastest |
 | Voice doesn't sound like me | Re-record in a quieter room: `ai-avatar onboard` → skip to Step 3 |
-| "Ollama connection refused" | Run `ollama serve` in a separate terminal |
+| `FileNotFoundError: Gemma model not found` | Run `./scripts/setup_models.sh` to download E2B weights |
+| HF `401` on model download | Apply for Gemma 4 access at huggingface.co/litert-community/gemma-4-E2B-it-litert-lm |
+| `litert_lm` not found | `pip install litert-lm-nightly` |
 | "LiveKit connection refused" | Start LiveKit (see Step B above) |
 | TTS download stuck | XTTS-v2 is ~1.8 GB — wait; check `~/.local/share/tts` |
 | Can't hear avatar in Meet | BlackHole not set as mic in Meet settings |
@@ -132,23 +134,33 @@ Ask the user which symptom they're seeing, then apply the fix:
 Offer these when the user wants to tweak behaviour:
 
 ```yaml
-# Smarter/slower responses
+# Use the larger, higher-quality Gemma 4 E4B model
 llm:
-  model: mistral         # or llama3.1, phi3, etc.
+  model_variant: e4b
+  model_path: ./models/gemma-4-e4b/gemma-4-E4B-it.litertlm
+
+# Disable meeting-control tools (mute/unmute) if not needed
+llm:
+  enable_tools: false
 
 # Faster STT (less accurate)
 stt:
   model_size: tiny
 
-# Use Apple Silicon GPU for TTS (faster)
+# Use Apple Silicon / CUDA GPU for TTS (faster)
 tts:
-  gpu: true              # works on CUDA too
+  gpu: true
 
 # Make the avatar more talkative / brief
 agent:
   system_prompt: |
     You are attending this meeting on behalf of [Name].
     Keep answers under 2 sentences unless asked for detail.
+```
+
+To download E4B instead of E2B:
+```bash
+GEMMA_VARIANT=e4b ./scripts/setup_models.sh
 ```
 
 After any config change: restart with `ai-avatar join <room>`.

@@ -13,8 +13,10 @@ dependencies = [
     "livekit-agents>=0.8",
     # Speech-to-text
     "faster-whisper>=1.0",
-    # LLM (Ollama client)
-    "ollama>=0.3",
+    # LLM — Google AI Edge LiteRT-LM (local Gemma 4 inference, no server needed)
+    "litert-lm-nightly",
+    # Hugging Face Hub — download gated Gemma 4 .litertlm weights
+    "huggingface-hub>=0.23",
     # TTS / voice cloning (Coqui XTTS-v2)
     "TTS>=0.22",
     # Audio processing

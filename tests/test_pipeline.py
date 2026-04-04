@@ -1,7 +1,7 @@
 """
 Unit tests for the STT → LLM → TTS pipeline.
 
-All tests use mocks so they run without real models, GPU, or a running Ollama.
+All tests use mocks so they run without real models or downloaded weights.
 Run: pytest tests/
 """
 
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from ai_meeting_avatar.config import AppConfig, LLMConfig, STTConfig, TTSConfig
-from ai_meeting_avatar.llm import ChatHistory, OllamaLLM
+from ai_meeting_avatar.llm import ChatHistory, GemmaLLM
 from ai_meeting_avatar.stt import EnergyVAD, TranscriptionResult, WhisperSTT
 from ai_meeting_avatar.tts import CoquiXTTS
 
@@ -101,32 +101,29 @@ class TestEnergyVAD:
 
 
 class TestChatHistory:
-    def test_messages_include_system_prompt(self):
+    def test_add_user_and_assistant_noop(self):
+        # History is managed internally by LiteRT-LM; these are no-ops
         h = ChatHistory(system_prompt="Be concise.")
         h.add_user("hello")
         h.add_assistant("hi")
-        msgs = h.to_ollama_messages()
-        assert msgs[0] == {"role": "system", "content": "Be concise."}
-        assert msgs[1]["role"] == "user"
-        assert msgs[2]["role"] == "assistant"
+        # No exception raised and system prompt preserved
+        assert h.system_prompt == "Be concise."
 
-    def test_max_turns_rolling(self):
-        h = ChatHistory(max_turns=2)
-        for i in range(5):
-            h.add_user(f"msg {i}")
-            h.add_assistant(f"reply {i}")
-        msgs = h.to_ollama_messages()
-        # Should only contain the last 2 turns (4 messages)
-        assert len(msgs) == 4
+    def test_clear_noop(self):
+        h = ChatHistory()
+        h.add_user("hello")
+        h.clear()  # should not raise
 
 
-class TestOllamaLLM:
+class TestGemmaLLM:
     @pytest.mark.asyncio
     async def test_chat_returns_string(self):
-        llm = OllamaLLM(model="llama3.2")
-        mock_client = AsyncMock()
-        mock_client.chat.return_value = {"message": {"content": "Paris"}}
-        llm._client = mock_client
+        llm = GemmaLLM(model_path="/fake/model.litertlm")
+        mock_conv = MagicMock()
+        mock_conv.send_message.return_value = {
+            "content": [{"type": "text", "text": "Paris"}]
+        }
+        llm._conversation = mock_conv
 
         history = ChatHistory()
         reply = await llm.chat(history, "Capital of France?")
@@ -134,23 +131,43 @@ class TestOllamaLLM:
 
     @pytest.mark.asyncio
     async def test_chat_raises_without_load(self):
-        llm = OllamaLLM()
+        llm = GemmaLLM(model_path="/fake/model.litertlm")
         with pytest.raises(RuntimeError, match="load()"):
             await llm.chat(ChatHistory(), "hello")
 
-    @pytest.mark.asyncio
-    async def test_system_prompt_in_messages(self):
-        llm = OllamaLLM(system_prompt="You are terse.")
-        mock_client = AsyncMock()
-        mock_client.chat.return_value = {"message": {"content": "ok"}}
-        llm._client = mock_client
+    def test_extract_text_handles_multiple_content_items(self):
+        response = {
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "World"},
+            ]
+        }
+        result = GemmaLLM._extract_text(response)
+        assert result == "Hello World"
 
-        history = ChatHistory(system_prompt="You are terse.")
-        await llm.chat(history, "hello")
+    def test_extract_text_skips_non_text_items(self):
+        response = {
+            "content": [
+                {"type": "tool_call", "name": "mute_microphone"},
+                {"type": "text", "text": "Done."},
+            ]
+        }
+        result = GemmaLLM._extract_text(response)
+        assert result == "Done."
 
-        call_args = mock_client.chat.call_args
-        messages = call_args.kwargs["messages"]
-        assert messages[0]["role"] == "system"
+    def test_extract_text_handles_empty_response(self):
+        result = GemmaLLM._extract_text({"content": []})
+        assert result == ""
+
+    def test_load_raises_file_not_found(self):
+        llm = GemmaLLM(model_path="/nonexistent/model.litertlm")
+        with pytest.raises(FileNotFoundError):
+            llm.load()
+
+    def test_close_is_idempotent(self):
+        llm = GemmaLLM(model_path="/fake/model.litertlm")
+        llm.close()  # should not raise even with no engine loaded
+        llm.close()  # second call also safe
 
 
 # ── TTS tests ─────────────────────────────────────────────────────────────────
@@ -209,7 +226,8 @@ class TestConfig:
 
         yaml_content = """
 llm:
-  model: mistral
+  model_variant: e4b
+  model_path: ./models/gemma-4-e4b/gemma-4-E4B-it.litertlm
   temperature: 0.5
 stt:
   model_size: small
@@ -218,7 +236,7 @@ stt:
         cfg_file.write_text(yaml_content)
 
         cfg = load_config(cfg_file)
-        assert cfg.llm.model == "mistral"
+        assert cfg.llm.model_variant == "e4b"
         assert cfg.llm.temperature == 0.5
         assert cfg.stt.model_size == "small"
         # Defaults preserved for unset keys

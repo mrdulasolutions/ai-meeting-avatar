@@ -7,10 +7,16 @@
 #   ./scripts/setup_models.sh
 #
 # What this script does:
-#   1. Pull Ollama LLM (llama3.2 default)
-#   2. Cache Coqui XTTS-v2 via a one-shot Python call
-#   3. Clone SadTalker + download its checkpoints   (phase 2, optional)
-#   4. Clone LivePortrait                             (phase 2, optional)
+#   1. Authenticate with Hugging Face (needed for gated Gemma 4 models)
+#   2. Download Gemma 4 E2B weights via huggingface-hub  (~2.6 GB)
+#   3. Cache Coqui XTTS-v2 via a one-shot Python call    (~1.8 GB)
+#   4. Clone SadTalker + download its checkpoints         (phase 2, optional)
+#   5. Clone LivePortrait                                  (phase 2, optional)
+#
+# Prerequisites:
+#   pip install -e .          (installs huggingface-hub CLI among other deps)
+#   A Hugging Face account with Gemma 4 model access approved at:
+#   https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -25,28 +31,96 @@ red()    { echo -e "\033[31m$*\033[0m"; }
 
 mkdir -p "$MODELS_DIR"
 
-# ── 1. Ollama ─────────────────────────────────────────────────────────────────
-green "==> [1/4] Ollama LLM"
+# ── 1. Hugging Face authentication ────────────────────────────────────────────
+green "==> [1/5] Hugging Face authentication"
+echo "  Gemma 4 is a gated model — you need a HF account with access granted."
+echo "  Apply for access at:"
+echo "  https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
+echo ""
 
-# Read model from config.yaml if yq is available, else default
-OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2}"
-if command -v yq &>/dev/null; then
-  OLLAMA_MODEL="$(yq '.llm.model' "$PROJECT_DIR/config.yaml" 2>/dev/null || echo "$OLLAMA_MODEL")"
+if ! command -v huggingface-cli &>/dev/null; then
+  echo "  huggingface-cli not found. Installing …"
+  pip install -q huggingface-hub
 fi
 
-if ! command -v ollama &>/dev/null; then
-  yellow "  Ollama CLI not found. Install from https://ollama.com then run:"
-  yellow "  ollama pull $OLLAMA_MODEL"
+# Check if already logged in
+if huggingface-cli whoami &>/dev/null 2>&1; then
+  HF_USER="$(huggingface-cli whoami 2>/dev/null | head -1 || echo 'logged in')"
+  green "  Already authenticated as: $HF_USER"
 else
-  echo "  Pulling model: $OLLAMA_MODEL (may take several minutes) …"
-  ollama pull "$OLLAMA_MODEL"
-  green "  Done: $OLLAMA_MODEL"
+  echo "  Logging in to Hugging Face …"
+  echo "  (You'll need your HF token from https://huggingface.co/settings/tokens)"
+  huggingface-cli login
 fi
 
-# ── 2. Coqui XTTS-v2 ─────────────────────────────────────────────────────────
-green "==> [2/4] Coqui XTTS-v2"
-echo "  Coqui TTS downloads models to ~/.local/share/tts on first use."
-echo "  Running a quick synthesis to trigger the download (~1.8 GB) …"
+# ── 2. Gemma 4 E2B model weights ──────────────────────────────────────────────
+green "==> [2/5] Gemma 4 E2B model (LiteRT-LM format)"
+
+E2B_DIR="$MODELS_DIR/gemma-4-e2b"
+E2B_REPO="litert-community/gemma-4-E2B-it-litert-lm"
+
+# Allow user to pick E4B instead via env var
+if [ "${GEMMA_VARIANT:-e2b}" = "e4b" ]; then
+  E2B_DIR="$MODELS_DIR/gemma-4-e4b"
+  E2B_REPO="litert-community/gemma-4-E4B-it-litert-lm"
+  green "  Using E4B variant (larger, higher quality)"
+fi
+
+if ls "$E2B_DIR"/*.litertlm &>/dev/null 2>&1; then
+  yellow "  Model already downloaded at $E2B_DIR — skipping."
+  yellow "  Delete $E2B_DIR to re-download."
+else
+  mkdir -p "$E2B_DIR"
+  echo "  Downloading from: $E2B_REPO"
+  echo "  Destination: $E2B_DIR"
+  echo "  Size: ~2.6 GB (E2B) — this will take a few minutes …"
+  echo ""
+
+  huggingface-cli download \
+    "$E2B_REPO" \
+    --local-dir "$E2B_DIR" \
+    --local-dir-use-symlinks False \
+    --include "*.litertlm" "*.json" "*.md"
+
+  # Verify at least one .litertlm file landed
+  if ls "$E2B_DIR"/*.litertlm &>/dev/null 2>&1; then
+    LITERTLM_FILE="$(ls "$E2B_DIR"/*.litertlm | head -1)"
+    SIZE="$(du -sh "$LITERTLM_FILE" 2>/dev/null | cut -f1)"
+    green "  Downloaded: $(basename "$LITERTLM_FILE") ($SIZE)"
+  else
+    red "  ERROR: No .litertlm file found in $E2B_DIR"
+    echo "  Check your HF token has access to the gated model."
+    echo "  Apply at: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm"
+    exit 1
+  fi
+fi
+
+# ── Write resolved model path to .env so config.py picks it up ───────────────
+LITERTLM_FILE="$(ls "$E2B_DIR"/*.litertlm | head -1)"
+ENV_FILE="$PROJECT_DIR/.env"
+
+if grep -q "GEMMA_MODEL_PATH" "$ENV_FILE" 2>/dev/null; then
+  # Update existing entry
+  sed -i.bak "s|^GEMMA_MODEL_PATH=.*|GEMMA_MODEL_PATH=$LITERTLM_FILE|" "$ENV_FILE"
+  rm -f "$ENV_FILE.bak"
+else
+  echo "GEMMA_MODEL_PATH=$LITERTLM_FILE" >> "$ENV_FILE"
+fi
+green "  Model path written to .env: GEMMA_MODEL_PATH=$LITERTLM_FILE"
+
+# Also update config.yaml model_path if yq is available
+if command -v yq &>/dev/null; then
+  yq -i ".llm.model_path = \"$LITERTLM_FILE\"" "$PROJECT_DIR/config.yaml"
+  green "  config.yaml llm.model_path updated."
+else
+  yellow "  yq not found — update config.yaml llm.model_path manually if needed:"
+  yellow "  model_path: \"$LITERTLM_FILE\""
+fi
+
+# ── 3. Coqui XTTS-v2 ─────────────────────────────────────────────────────────
+green "==> [3/5] Coqui XTTS-v2 (TTS voice cloning)"
+echo "  XTTS-v2 downloads to ~/.local/share/tts on first use (~1.8 GB)."
+echo "  Triggering the download now so it's ready when you join a call …"
 
 python3 - <<'PYEOF'
 import os, sys
@@ -60,8 +134,8 @@ except Exception as e:
     print("  It will be downloaded on first ai-avatar run instead.")
 PYEOF
 
-# ── 3. SadTalker (Phase 2 — optional) ────────────────────────────────────────
-green "==> [3/4] SadTalker (avatar rendering — Phase 2)"
+# ── 4. SadTalker (Phase 2 — optional) ────────────────────────────────────────
+green "==> [4/5] SadTalker (avatar rendering — Phase 2)"
 
 SADTALKER_DIR="$MODELS_DIR/SadTalker"
 if [ -d "$SADTALKER_DIR" ]; then
@@ -74,11 +148,9 @@ else
     echo "  Downloading SadTalker checkpoints …"
     cd "$SADTALKER_DIR"
 
-    # Official checkpoint download script
     if [ -f "scripts/download_models.sh" ]; then
       bash scripts/download_models.sh
     else
-      # Fallback: manual wget
       CKPT_DIR="$SADTALKER_DIR/checkpoints"
       GFPGAN_DIR="$SADTALKER_DIR/gfpgan/weights"
       mkdir -p "$CKPT_DIR" "$GFPGAN_DIR"
@@ -95,12 +167,12 @@ else
     green "  SadTalker ready."
     cd "$PROJECT_DIR"
   else
-    yellow "  git not found — skipping SadTalker. Install git and re-run."
+    yellow "  git not found — skipping SadTalker."
   fi
 fi
 
-# ── 4. LivePortrait (Phase 2 — optional) ─────────────────────────────────────
-green "==> [4/4] LivePortrait (avatar rendering — alternative)"
+# ── 5. LivePortrait (Phase 2 — optional) ─────────────────────────────────────
+green "==> [5/5] LivePortrait (avatar rendering — alternative)"
 
 LIVEPORTRAIT_DIR="$MODELS_DIR/LivePortrait"
 if [ -d "$LIVEPORTRAIT_DIR" ]; then
@@ -109,7 +181,7 @@ else
   if command -v git &>/dev/null; then
     echo "  Cloning LivePortrait …"
     git clone --depth 1 https://github.com/KwaiVGI/LivePortrait.git "$LIVEPORTRAIT_DIR" || \
-      yellow "  LivePortrait clone failed (non-fatal). You can clone it manually."
+      yellow "  LivePortrait clone failed (non-fatal). Clone manually if needed."
     green "  LivePortrait cloned."
   else
     yellow "  git not found — skipping LivePortrait."
@@ -122,6 +194,8 @@ green "════════════════════════�
 green " Model setup complete!"
 green "════════════════════════════════════════════"
 echo ""
+echo " Gemma 4 model: $LITERTLM_FILE"
+echo ""
 echo " Next steps:"
 echo "   1. Add a 6-30 s voice sample WAV:"
 echo "      cp /path/to/voice.wav assets/voice_samples/speaker.wav"
@@ -130,10 +204,15 @@ echo "   2. (Optional) Add avatar photo:"
 echo "      cp /path/to/photo.jpg assets/avatar.jpg"
 echo ""
 echo "   3. Start LiveKit server (local dev):"
-echo "      docker run --rm -p 7880:7880 -p 7881:7881 livekit/livekit-server --dev"
+echo "      docker run --rm -p 7880:7880 -p 7881:7881 \\"
+echo "        -e LIVEKIT_KEYS=\"devkey: secret\" \\"
+echo "        livekit/livekit-server --dev"
 echo ""
 echo "   4. Join a meeting:"
 echo "      ai-avatar join my-room"
 echo ""
 echo "   5. Test the pipeline without LiveKit:"
 echo "      ai-avatar test-pipeline"
+echo ""
+echo " To download the larger E4B model instead:"
+echo "   GEMMA_VARIANT=e4b ./scripts/setup_models.sh"

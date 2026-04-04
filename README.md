@@ -14,8 +14,8 @@ Remote participant audio
   WhisperSTT                 ← faster-whisper, runs on CPU/CUDA/MPS
         │ transcript
         ▼
-  OllamaLLM                  ← local Ollama server (llama3.2 default)
-        │ reply text
+  GemmaLLM (LiteRT-LM)       ← Gemma 4 E2B/E4B, in-process, no server
+        │ reply text          ← supports function calling (mute/unmute, etc.)
         ▼
   CoquiXTTS (XTTS-v2)        ← voice cloning from 6-30 s sample WAV
         │ audio chunks
@@ -37,7 +37,7 @@ Remote participant audio
 |--------|------|---------|
 | Config | `config.py` | Pydantic models, YAML + env loading |
 | STT | `stt.py` | `WhisperSTT` + `EnergyVAD` |
-| LLM | `llm.py` | `OllamaLLM`, `ChatHistory` |
+| LLM | `llm.py` | `GemmaLLM` (LiteRT-LM), `ChatHistory`, meeting tools |
 | TTS | `tts.py` | `CoquiXTTS` with voice cloning |
 | Avatar | `avatar.py` | `SadTalkerRenderer`, `LivePortraitRenderer`, `OBSVirtualCamera` |
 | Orchestrator | `orchestrator.py` | LiveKit agent wiring STT→LLM→TTS |
@@ -45,10 +45,23 @@ Remote participant audio
 
 ---
 
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **LLM** | [Google AI Edge LiteRT-LM](https://ai.google.dev/edge/litert-lm/overview) + Gemma 4 E2B/E4B — runs in-process, no server |
+| **STT** | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — local Whisper |
+| **TTS** | [Coqui XTTS-v2](https://github.com/coqui-ai/TTS) — voice cloning |
+| **Transport** | [LiveKit Agents](https://docs.livekit.io/agents/) — real-time media |
+| **Avatar** | SadTalker / LivePortrait (Phase 2) |
+
+---
+
 ## Requirements
 
 - **Python 3.11+**
-- **Ollama** — [install](https://ollama.com) and run `ollama serve`
+- **Linux or macOS** (LiteRT-LM platform requirement; Windows coming soon)
+- **Hugging Face account** with Gemma 4 access approved — apply at [litert-community/gemma-4-E2B-it-litert-lm](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
 - **LiveKit server** — local dev server via Docker (see below), or any LiveKit cloud deployment
 - **ffmpeg** — for audio/video processing (`brew install ffmpeg` / `apt install ffmpeg`)
 - A **6-30 second WAV voice sample** for XTTS-v2 voice cloning
@@ -70,7 +83,8 @@ source .venv/bin/activate
 # 3. Install Python dependencies
 pip install -e .
 
-# 4. Download models (Whisper, XTTS-v2, Ollama model)
+# 4. Download models (Gemma 4 E2B via HF, XTTS-v2)
+#    Requires HF login — you'll be prompted
 chmod +x scripts/setup_models.sh
 ./scripts/setup_models.sh
 
@@ -81,13 +95,20 @@ cp /path/to/your_voice.wav assets/voice_samples/speaker.wav
 cp /path/to/photo.jpg assets/avatar.jpg
 ```
 
+Or just run the interactive wizard — it handles everything including voice recording:
+```bash
+ai-avatar onboard
+```
+
 ### Configuration
 
-Copy and edit `config.yaml`:
+Key fields in `config.yaml`:
 
 ```yaml
 llm:
-  model: llama3.2        # any model available via `ollama list`
+  model_variant: e2b     # "e2b" (~2.6 GB, fast) or "e4b" (~4 GB, higher quality)
+  model_path: ./models/gemma-4-e2b/gemma-4-E2B-it.litertlm
+  enable_tools: true     # lets Gemma call mute/unmute/etc. during the call
 
 stt:
   model_size: base       # tiny | base | small | medium | large-v3
@@ -98,7 +119,9 @@ tts:
   gpu: false
 ```
 
-Secrets can go in `.env` (see `.env.example`) — they override config.yaml.
+The `GEMMA_MODEL_PATH` env var (set automatically by `setup_models.sh`) overrides `llm.model_path`.
+
+Secrets go in `.env` (see `.env.example`) — they override config.yaml.
 
 ---
 
@@ -239,12 +262,15 @@ ai-meeting-avatar/
 | Symptom | Fix |
 |---------|-----|
 | `RuntimeError: Call load() first` | You forgot to call `stt.load()` / `tts.load()` / `llm.load()` |
+| `FileNotFoundError: Gemma model not found` | Run `./scripts/setup_models.sh` to download weights |
+| HF download `401 Unauthorized` | Your HF account needs Gemma 4 access — apply at the model page |
 | XTTS download hangs | XTTS-v2 is ~1.8 GB — let it finish, check `~/.local/share/tts` |
 | Empty transcription | Use a larger Whisper model (`stt.model_size: small`) |
-| Ollama connection refused | Run `ollama serve` in another terminal |
+| Gemma responses are slow | E2B on CPU is ~15-30 tok/s; use `device: mps` on Apple Silicon |
 | TTS sounds wrong / robotic | Voice sample too short (<6 s) or too noisy — record a cleaner clip |
 | LiveKit `401 Unauthorized` | API key/secret mismatch — check `.env` and LiveKit server flags |
 | SadTalker `inference.py not found` | Re-run `./scripts/setup_models.sh` |
+| `litert_lm` import error | Run `pip install litert-lm-nightly` |
 
 ---
 

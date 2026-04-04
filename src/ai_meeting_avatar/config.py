@@ -63,16 +63,23 @@ class STTConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    host: str = "http://localhost:11434"
-    model: str = "llama3.2"
+    # Model variant: "e2b" (lightweight ~2.6 GB) or "e4b" (higher quality ~4 GB)
+    model_variant: str = "e2b"
+    # Path to the .litertlm weights file on disk
+    model_path: str = "./models/gemma-4-e2b/gemma-4-E2B-it.litertlm"
+    fallback_model_path: str = "./models/gemma-4-e2b"
+    # Hugging Face repos for setup_models.sh
+    hf_repo_e2b: str = "litert-community/gemma-4-E2B-it-litert-lm"
+    hf_repo_e4b: str = "litert-community/gemma-4-E4B-it-litert-lm"
     temperature: float = 0.7
     max_tokens: int = 256
+    enable_tools: bool = True
     history_turns: int = 10
 
     @model_validator(mode="after")
     def _override_from_env(self) -> "LLMConfig":
-        if host := os.getenv("OLLAMA_HOST"):
-            self.host = host
+        if path := os.getenv("GEMMA_MODEL_PATH"):
+            self.model_path = path
         return self
 
 

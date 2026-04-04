@@ -7,7 +7,7 @@ Architecture
 2.  It subscribes to every remote audio track.
 3.  Each audio frame is fed into an EnergyVAD.
 4.  When VAD detects end-of-speech it fires the pipeline:
-      audio → WhisperSTT → OllamaLLM → CoquiXTTS → AudioSource → room
+      audio → WhisperSTT → GemmaLLM (LiteRT-LM) → CoquiXTTS → AudioSource → room
 5.  (Phase 2) The synthesised audio also drives the AvatarRenderer and the
     result is pushed to OBS via OBSVirtualCamera.
 
@@ -31,7 +31,7 @@ from livekit import rtc
 
 from .avatar import AvatarRenderer, OBSVirtualCamera, create_renderer
 from .config import AppConfig, load_config
-from .llm import ChatHistory, OllamaLLM
+from .llm import ChatHistory, GemmaLLM
 from .stt import EnergyVAD, WhisperSTT
 from .tts import CoquiXTTS
 
@@ -58,12 +58,12 @@ class MeetingAvatarAgent:
             compute_type=config.stt.compute_type,
             language=config.stt.language,
         )
-        self._llm = OllamaLLM(
-            model=config.llm.model,
-            host=config.llm.host,
-            temperature=config.llm.temperature,
-            max_tokens=config.llm.max_tokens,
+        self._llm = GemmaLLM(
+            model_path=config.llm.model_path,
             system_prompt=config.agent.system_prompt,
+            enable_tools=config.llm.enable_tools,
+            max_tokens=config.llm.max_tokens,
+            temperature=config.llm.temperature,
         )
         self._tts = CoquiXTTS(
             model_name=config.tts.model,

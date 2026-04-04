@@ -141,77 +141,132 @@ def step_check_deps() -> bool:
     return True
 
 
-def step_ollama() -> bool:
-    """Verify Ollama is running and pull the model. Return True if OK."""
-    _step(2, 6, "LLM — Ollama")
+def step_gemma_download() -> bool:
+    """Download Gemma 4 E2B weights from Hugging Face. Return True if ready."""
+    _step(2, 6, "LLM — Gemma 4 (Google AI Edge)")
 
     from .config import load_config  # noqa: PLC0415
 
     cfg = load_config()
-    model = cfg.llm.model
-    host = cfg.llm.host
+    model_path = Path(cfg.llm.model_path)
 
-    # Check if ollama CLI exists
-    if not shutil.which("ollama"):
-        _fail("Ollama is not installed.")
-        _info("Download it from [link=https://ollama.com]https://ollama.com[/link]")
-        _info("Then run:  ollama serve")
-        console.print()
-        if not Confirm.ask("  Skip this step for now?", default=True):
-            return False
+    # Check if already downloaded
+    if model_path.exists():
+        size = model_path.stat().st_size / (1024 ** 3)
+        _ok(f"Gemma 4 model already present: {model_path} ({size:.1f} GB)")
         return True
 
-    # Check if ollama server is reachable
-    import urllib.request  # noqa: PLC0415
+    # Check parent dir for any .litertlm file
+    parent = model_path.parent
+    existing = list(parent.glob("*.litertlm")) if parent.exists() else []
+    if existing:
+        _ok(f"Found model: {existing[0]}")
+        return True
 
-    try:
-        urllib.request.urlopen(f"{host}/api/tags", timeout=3)
-        _ok(f"Ollama server reachable at {host}")
-    except Exception:
-        _fail(f"Ollama server not running at {host}")
-        _info("Start it with:  ollama serve")
-        console.print()
-        _info("Starting Ollama in the background …")
-        subprocess.Popen(
-            ["ollama", "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+    console.print(
+        Panel(
+            "[white]Gemma 4 E2B runs entirely on your machine — no API keys, no cloud.\n\n"
+            "Requirements:\n"
+            "  • [bold]Hugging Face account[/bold] (free) with Gemma 4 access approved\n"
+            "  • Apply at: [cyan]https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm[/cyan]\n"
+            "  • Download size: [bold]~2.6 GB[/bold]\n\n"
+            "You only need to do this once.",
+            title="[bold yellow]Gemma 4 E2B Download[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
         )
-        time.sleep(3)
-        try:
-            urllib.request.urlopen(f"{host}/api/tags", timeout=5)
-            _ok("Ollama server started.")
-        except Exception:
-            _fail("Could not start Ollama automatically.")
-            _info("Open a new terminal and run:  ollama serve")
-            Confirm.ask("  Press Enter when Ollama is running", default=True)
-
-    # Pull the model
+    )
     console.print()
-    _info(f"Pulling model '{model}' (may take a few minutes on first run) …")
+
+    if not Confirm.ask("  Download Gemma 4 E2B now?", default=True):
+        _warn("Skipped. Run setup_models.sh later to download.")
+        return False
+
+    # Check HF CLI
+    try:
+        result = subprocess.run(
+            ["huggingface-cli", "whoami"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            username = result.stdout.strip().split("\n")[0]
+            _ok(f"Logged in to Hugging Face as: {username}")
+        else:
+            raise subprocess.CalledProcessError(result.returncode, "whoami")
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        _info("You need to log in to Hugging Face first.")
+        _info("Get your token at: https://huggingface.co/settings/tokens")
+        console.print()
+        token = Prompt.ask("  Paste your HF token (input hidden)", password=True)
+        login_result = subprocess.run(
+            ["huggingface-cli", "login", "--token", token],
+            capture_output=True, text=True,
+        )
+        if login_result.returncode != 0:
+            _fail("HF login failed. Check your token and try again.")
+            return False
+        _ok("Logged in to Hugging Face.")
+
+    # Download model
+    parent.mkdir(parents=True, exist_ok=True)
+    repo = cfg.llm.hf_repo_e2b
+    console.print()
+    _info(f"Downloading {repo} → {parent}")
+    _info("This is ~2.6 GB and may take 5-20 minutes depending on your connection.")
+    console.print()
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[cyan]{task.description}"),
         TimeElapsedColumn(),
         console=console,
-        transient=True,
+        transient=False,
     ) as progress:
-        task = progress.add_task(f"Pulling {model} …", total=None)
-        result = subprocess.run(
-            ["ollama", "pull", model],
+        task = progress.add_task("Downloading Gemma 4 E2B …", total=None)
+
+        dl_result = subprocess.run(
+            [
+                "huggingface-cli", "download",
+                repo,
+                "--local-dir", str(parent),
+                "--local-dir-use-symlinks", "False",
+                "--include", "*.litertlm", "*.json", "*.md",
+            ],
             capture_output=True,
             text=True,
         )
         progress.stop()
 
-    if result.returncode == 0:
-        _ok(f"Model '{model}' ready.")
-        return True
-    else:
-        _fail(f"Could not pull '{model}'.")
-        console.print(f"  [dim]{result.stderr[-300:]}[/dim]")
+    if dl_result.returncode != 0:
+        _fail("Download failed.")
+        console.print(f"  [dim]{dl_result.stderr[-500:]}[/dim]")
+        console.print()
+        _info("If you see a 401 error, your account may not have access yet.")
+        _info("Apply at: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm")
         return False
+
+    # Find the downloaded .litertlm file
+    litertlm_files = list(parent.glob("*.litertlm"))
+    if not litertlm_files:
+        _fail("No .litertlm file found after download.")
+        return False
+
+    litertlm_path = litertlm_files[0]
+    size_gb = litertlm_path.stat().st_size / (1024 ** 3)
+    _ok(f"Downloaded: {litertlm_path.name} ({size_gb:.1f} GB)")
+
+    # Write the resolved path to .env
+    env_path = Path(".env")
+    env_line = f"GEMMA_MODEL_PATH={litertlm_path}"
+    if env_path.exists():
+        lines = env_path.read_text().splitlines()
+        lines = [l for l in lines if not l.startswith("GEMMA_MODEL_PATH=")]
+        lines.append(env_line)
+        env_path.write_text("\n".join(lines) + "\n")
+    else:
+        env_path.write_text(env_line + "\n")
+
+    _ok(f"Model path saved to .env")
+    return True
 
 
 def step_record_voice() -> bool:
@@ -420,7 +475,7 @@ def step_summary(voice_ok: bool, ollama_ok: bool, livekit_ok: bool, test_ok: boo
         table.add_row(icon, label)
 
     row(True, "Python dependencies")
-    row(ollama_ok, f"Ollama LLM")
+    row(ollama_ok, "Gemma 4 E2B (LiteRT-LM)")
     row(voice_ok, "Voice sample recorded")
     row(livekit_ok, "LiveKit server")
     row(test_ok, "Pipeline smoke test")
@@ -459,14 +514,14 @@ async def run_onboarding() -> None:
         _fail("Dependency check failed. Fix the issues above and re-run:  ai-avatar onboard")
         sys.exit(1)
 
-    ollama_ok = step_ollama()
+    llm_ok = step_gemma_download()
     voice_ok = step_record_voice()
     livekit_ok = step_livekit()
     test_ok = step_pipeline_test()
 
     step_summary(
         voice_ok=voice_ok,
-        ollama_ok=ollama_ok,
+        ollama_ok=llm_ok,
         livekit_ok=livekit_ok,
         test_ok=test_ok,
     )
