@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(chmod +x .claude/skills/ai-meeting-avatar/scripts/*.sh)",
+      "Bash(bash .claude/skills/ai-meeting-avatar/scripts/*.sh:*)",
+      "Bash(source .venv/bin/activate:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(ai-avatar:*)",
+      "Bash(pip install:*)",
+      "Bash(uv run:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(docker run:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker stop:*)",
+      "Bash(pkill -f \"ai-avatar join\":*)",
+      "Bash(tail -* /tmp/ai-avatar.log:*)",
+      "Bash(curl -s --max-time * http://localhost:7880:*)",
+      "Bash(huggingface-cli:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(cat .env:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

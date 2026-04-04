@@ -32,11 +32,13 @@ Use the state output above to branch:
 
 | State | Action |
 |-------|--------|
-| `PROJECT=missing` | Tell user: "Can't find ~/Desktop/ai-meeting-avatar." Stop. |
+| `PROJECT=missing` | Tell user: "Can't find the ai-meeting-avatar project. Make sure you're in the right directory." Stop. |
 | `VENV=missing` | Run **Venv Setup** below, then re-invoke skill. |
 | `SETUP_COMPLETE=False` | Run **First-Run Onboarding**. |
 | `BACKEND=gemma` AND `GEMMA_MODEL=missing` | Run **First-Run Onboarding**. |
+| `BACKEND=claude` AND `ANTHROPIC_KEY=missing` | Tell user: "Claude backend needs an API key. Paste your key and I'll save it to .env." Then `echo "ANTHROPIC_API_KEY=THE_KEY" >> .env` |
 | `KOKORO_MODEL=missing` | Run **First-Run Onboarding**. |
+| `DOCKER=missing` AND user wants to join | Warn: "Docker not installed — needed for local LiveKit. Install from docker.com or use LiveKit Cloud." |
 | Otherwise (ready) | Handle user command (join, status, etc.). |
 
 If `$ARGUMENTS` is provided, handle as a command:
@@ -54,7 +56,6 @@ If `$ARGUMENTS` is provided, handle as a command:
 ## Venv Setup
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip -q
@@ -85,7 +86,7 @@ Tell the user:
 Wait for choice. Apply:
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar brain --set gemma   # or: ai-avatar brain --set claude
 ```
 
@@ -104,7 +105,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/set-voice.sh" "VOICE_ID"
 ### Run the wizard
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar onboard
 ```
 
@@ -143,7 +144,7 @@ sleep 3
 
 **LiveKit Cloud (for remote/phone access):**
 1. Sign up free at cloud.livekit.io → create project
-2. Add to `~/Desktop/ai-meeting-avatar/.env`:
+2. Add to `.env` in the project root:
    ```
    LIVEKIT_URL=wss://your-project.livekit.cloud
    LIVEKIT_API_KEY=APxxxx
@@ -164,13 +165,13 @@ bash "${CLAUDE_SKILL_DIR}/scripts/save-pref.sh" last_room "ROOM_NAME"
 ### 3. Join
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar join "ROOM_NAME"
 ```
 
 Or run in background:
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 nohup ai-avatar join "ROOM_NAME" > /tmp/ai-avatar.log 2>&1 &
 echo "PID: $!"
 ```
@@ -247,7 +248,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/set-voice.sh" "VOICE_ID"
 > 2) Claude — smarter, needs API key
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar brain --set gemma   # or: ai-avatar brain --set claude
 ```
 
@@ -255,7 +256,6 @@ If switching to Claude and `ANTHROPIC_API_KEY` is not in `.env`:
 > "Paste your Anthropic API key (from console.anthropic.com):"
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar
 echo "ANTHROPIC_API_KEY=THE_KEY" >> .env
 ```
 
@@ -270,42 +270,42 @@ echo "ANTHROPIC_API_KEY=THE_KEY" >> .env
 > "Drop the path to a front-facing photo (JPG or PNG)."
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar set-photo "PATH_FROM_USER"
 ```
 
 ### Enable Avatar
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar enable
 ```
 
 ### Disable Avatar
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar disable
 ```
 
 ### Avatar Status
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar status
 ```
 
 ### Test Avatar Pipeline
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar test
 ```
 
 ### Full Avatar Setup (guided)
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar avatar-setup
 ```
 
@@ -318,7 +318,7 @@ This installs deps, validates photo, downloads SadTalker, and enables the avatar
 ## Generate Token (for phone/remote access)
 
 ```bash
-cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
+source .venv/bin/activate
 ai-avatar generate-token --room "ROOM" --identity "phone-user"
 ```
 

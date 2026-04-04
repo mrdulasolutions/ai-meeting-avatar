@@ -141,6 +141,7 @@ def _set_config_backend(backend: str) -> None:
         rf'\1"{backend}"',
         text,
         flags=re.MULTILINE,
+        count=1,
     )
     config_path.write_text(new_text)
 
@@ -355,6 +356,40 @@ def step_claude_setup() -> bool:
         else:
             _fail("Failed to install anthropic. Run:  pip install -e '.[claude]'")
             return False
+
+    # Validate the API key with a quick ping
+    console.print()
+    _info("Validating API key …")
+    try:
+        import anthropic  # noqa: PLC0415
+
+        key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not key:
+            # Re-read .env since we may have just written it
+            env_path = Path(".env")
+            if env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("ANTHROPIC_API_KEY="):
+                        key = line.split("=", 1)[1].strip()
+                        break
+        if key:
+            client = anthropic.Anthropic(api_key=key)
+            # Minimal API call to verify the key works
+            client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            _ok("API key is valid — Claude is working.")
+        else:
+            _warn("No API key found — Claude will fail at runtime. Add ANTHROPIC_API_KEY to .env")
+            return False
+    except anthropic.AuthenticationError:
+        _fail("API key is invalid. Check your key at console.anthropic.com")
+        return False
+    except Exception as exc:
+        _warn(f"Could not validate key (network issue?): {exc}")
+        _info("Continuing — key will be checked when you join a room.")
 
     return True
 
@@ -585,6 +620,7 @@ def _set_config_avatar(photo_path: str) -> None:
         rf'\1"{photo_path}"',
         text,
         flags=re.MULTILINE,
+        count=1,
     )
     config_path.write_text(new_text)
 

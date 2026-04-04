@@ -4,12 +4,17 @@
 set -euo pipefail
 
 VOICE="${1:?Usage: set-voice.sh <voice-id>}"
-PROJECT=~/Desktop/ai-meeting-avatar
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT="$(cd "$SKILL_DIR/../../.." && pwd)"
 
 cd "$PROJECT"
 
 # Update config.yaml
+if [ ! -f "config.yaml" ]; then
+  echo "Error: config.yaml not found in $PROJECT"
+  exit 1
+fi
+
 sed -i '' "s/^  voice: .*/  voice: \"$VOICE\"/" config.yaml
 echo "config.yaml voice set to $VOICE"
 
