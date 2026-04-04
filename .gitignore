@@ -29,13 +29,7 @@ outputs/
 *.mkv
 output_*.wav
 
-# Speaker voice samples (user-provided, not committed)
-assets/voice_samples/*.wav
-assets/voice_samples/*.mp3
-# Keep the directory
-!assets/voice_samples/.gitkeep
-
-# Avatar photo (user-provided)
+# Avatar photo (user-provided, not committed)
 assets/avatar.jpg
 assets/avatar.png
 

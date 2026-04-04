@@ -66,11 +66,10 @@ class MeetingAvatarAgent:
             temperature=config.llm.temperature,
         )
         self._tts = CoquiXTTS(
-            model_name=config.tts.model,
-            speaker_wav=config.tts.speaker_wav,
-            language=config.tts.language,
+            voice=config.tts.voice,
             speed=config.tts.speed,
-            gpu=config.tts.gpu,
+            lang=config.tts.lang,
+            model_dir=config.tts.model_dir,
         )
         self._avatar: AvatarRenderer = create_renderer(config.avatar)
         self._obs: Optional[OBSVirtualCamera] = None

@@ -170,35 +170,43 @@ class TestGemmaLLM:
         llm.close()  # second call also safe
 
 
-# ── TTS tests ─────────────────────────────────────────────────────────────────
+# ── TTS tests (KokoroTTS via CoquiXTTS alias) ─────────────────────────────────
 
 
-class TestCoquiXTTS:
+class TestKokoroTTS:
     @pytest.mark.asyncio
     async def test_synthesize_raises_without_load(self):
-        tts = CoquiXTTS(speaker_wav="speaker.wav")
+        tts = CoquiXTTS(voice="af_heart")
         with pytest.raises(RuntimeError, match="load()"):
             await tts.synthesize("hello")
 
     @pytest.mark.asyncio
-    async def test_synthesize_raises_without_speaker_wav(self):
-        tts = CoquiXTTS()
-        tts._tts = MagicMock()  # bypass load
-        with pytest.raises(ValueError, match="speaker_wav"):
-            await tts.synthesize("hello")
+    async def test_synthesize_uses_default_voice(self):
+        tts = CoquiXTTS(voice="af_heart")
+        mock_kokoro = MagicMock()
+        mock_kokoro.create.return_value = (np.zeros(2400, dtype=np.float32), 24_000)
+        tts._kokoro = mock_kokoro
+
+        audio, sr = await tts.synthesize("hello")
+        mock_kokoro.create.assert_called_once_with(
+            "hello", voice="af_heart", speed=tts._speed, lang=tts._lang
+        )
+        assert sr == 24_000
 
     @pytest.mark.asyncio
-    async def test_synthesize_raises_wav_not_found(self):
-        tts = CoquiXTTS(speaker_wav="/nonexistent/speaker.wav")
-        tts._tts = MagicMock()
-        with pytest.raises(FileNotFoundError):
-            await tts.synthesize("hello")
+    async def test_synthesize_voice_override(self):
+        tts = CoquiXTTS(voice="af_heart")
+        mock_kokoro = MagicMock()
+        mock_kokoro.create.return_value = (np.zeros(2400, dtype=np.float32), 24_000)
+        tts._kokoro = mock_kokoro
+
+        await tts.synthesize("hello", voice="am_adam")
+        call_voice = mock_kokoro.create.call_args.kwargs["voice"]
+        assert call_voice == "am_adam"
 
     @pytest.mark.asyncio
     async def test_iter_audio_chunks_yields_correct_shape(self):
-        tts = CoquiXTTS(speaker_wav="speaker.wav")
-
-        # Patch synthesize to return a known array
+        tts = CoquiXTTS(voice="af_heart")
         audio = np.zeros(4800, dtype=np.float32)  # 200ms at 24 kHz
         tts.synthesize = AsyncMock(return_value=(audio, 24_000))
 
@@ -206,9 +214,22 @@ class TestCoquiXTTS:
         async for chunk, sr in tts.iter_audio_chunks("hello", chunk_samples=2400):
             chunks.append(chunk)
 
-        assert len(chunks) == 2  # 4800 / 2400 = 2
+        assert len(chunks) == 2
         assert all(len(c) == 2400 for c in chunks)
         assert sr == 24_000
+
+    def test_sample_rate_constant(self):
+        assert CoquiXTTS.SAMPLE_RATE == 24_000
+
+    @pytest.mark.asyncio
+    async def test_synthesize_to_wav_bytes_returns_bytes(self):
+        tts = CoquiXTTS(voice="af_heart")
+        audio = np.zeros(2400, dtype=np.float32)
+        tts.synthesize = AsyncMock(return_value=(audio, 24_000))
+
+        result = await tts.synthesize_to_wav_bytes("hello")
+        assert isinstance(result, bytes)
+        assert len(result) > 44  # at least a WAV header
 
 
 # ── Config tests ───────────────────────────────────────────────────────────────

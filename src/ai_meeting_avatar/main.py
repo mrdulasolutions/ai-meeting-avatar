@@ -149,9 +149,9 @@ async def _test_pipeline(config_path: str, duration: int, forced_text: str | Non
     from rich.console import Console  # noqa: PLC0415
 
     from .config import load_config  # noqa: PLC0415
-    from .llm import ChatHistory, OllamaLLM  # noqa: PLC0415
+    from .llm import ChatHistory, GemmaLLM  # noqa: PLC0415
     from .stt import WhisperSTT  # noqa: PLC0415
-    from .tts import CoquiXTTS  # noqa: PLC0415
+    from .tts import KokoroTTS  # noqa: PLC0415
 
     console = Console()
     cfg = load_config(config_path)
@@ -163,18 +163,18 @@ async def _test_pipeline(config_path: str, duration: int, forced_text: str | Non
         compute_type=cfg.stt.compute_type,
         language=cfg.stt.language,
     )
-    llm = OllamaLLM(
-        model=cfg.llm.model,
-        host=cfg.llm.host,
-        temperature=cfg.llm.temperature,
-        max_tokens=cfg.llm.max_tokens,
+    llm = GemmaLLM(
+        model_path=cfg.llm.model_path,
         system_prompt=cfg.agent.system_prompt,
+        enable_tools=cfg.llm.enable_tools,
+        max_tokens=cfg.llm.max_tokens,
+        temperature=cfg.llm.temperature,
     )
-    tts = CoquiXTTS(
-        model_name=cfg.tts.model,
-        speaker_wav=cfg.tts.speaker_wav,
-        language=cfg.tts.language,
-        gpu=cfg.tts.gpu,
+    tts = KokoroTTS(
+        voice=cfg.tts.voice,
+        speed=cfg.tts.speed,
+        lang=cfg.tts.lang,
+        model_dir=cfg.tts.model_dir,
     )
 
     console.print("[bold cyan]Loading models …[/bold cyan]")
@@ -243,8 +243,9 @@ def check_deps() -> None:
 
     py_deps = [
         ("faster_whisper", "faster-whisper"),
-        ("ollama", "ollama"),
-        ("TTS", "Coqui TTS"),
+        ("litert_lm", "litert-lm-nightly"),
+        ("kokoro_onnx", "kokoro-onnx"),
+        ("onnxruntime", "onnxruntime"),
         ("livekit", "livekit"),
         ("livekit.agents", "livekit-agents"),
         ("numpy", "numpy"),

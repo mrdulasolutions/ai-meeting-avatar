@@ -17,8 +17,9 @@ dependencies = [
     "litert-lm-nightly",
     # Hugging Face Hub — download gated Gemma 4 .litertlm weights
     "huggingface-hub>=0.23",
-    # TTS / voice cloning (Coqui XTTS-v2)
-    "TTS>=0.22",
+    # TTS — Kokoro-ONNX (lightweight, no GPU, no voice samples needed)
+    "kokoro-onnx>=0.5",
+    "onnxruntime>=1.20",
     # Audio processing
     "numpy>=1.24",
     "scipy>=1.11",

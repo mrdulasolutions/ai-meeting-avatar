@@ -51,7 +51,7 @@ Remote participant audio
 |-------|-----------|
 | **LLM** | [Google AI Edge LiteRT-LM](https://ai.google.dev/edge/litert-lm/overview) + Gemma 4 E2B/E4B — runs in-process, no server |
 | **STT** | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — local Whisper |
-| **TTS** | [Coqui XTTS-v2](https://github.com/coqui-ai/TTS) — voice cloning |
+| **TTS** | [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) — 82M params, CPU-only, ~80 MB, multiple voice presets |
 | **Transport** | [LiveKit Agents](https://docs.livekit.io/agents/) — real-time media |
 | **Avatar** | SadTalker / LivePortrait (Phase 2) |
 
@@ -64,8 +64,9 @@ Remote participant audio
 - **Hugging Face account** with Gemma 4 access approved — apply at [litert-community/gemma-4-E2B-it-litert-lm](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
 - **LiveKit server** — local dev server via Docker (see below), or any LiveKit cloud deployment
 - **ffmpeg** — for audio/video processing (`brew install ffmpeg` / `apt install ffmpeg`)
-- A **6-30 second WAV voice sample** for XTTS-v2 voice cloning
 - *(Phase 2)* **OBS Studio** with WebSocket server enabled
+
+No voice samples, no GPU, no API keys beyond Hugging Face for model download.
 
 ---
 
@@ -80,25 +81,17 @@ cd ai-meeting-avatar
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 3. Install Python dependencies
+# 3. Install and set up everything — that's it
 pip install -e .
-
-# 4. Download models (Gemma 4 E2B via HF, XTTS-v2)
-#    Requires HF login — you'll be prompted
-chmod +x scripts/setup_models.sh
-./scripts/setup_models.sh
-
-# 5. Add your voice sample
-cp /path/to/your_voice.wav assets/voice_samples/speaker.wav
-
-# 6. (Optional) Add avatar photo for Phase 2
-cp /path/to/photo.jpg assets/avatar.jpg
-```
-
-Or just run the interactive wizard — it handles everything including voice recording:
-```bash
 ai-avatar onboard
 ```
+
+The onboarding wizard handles:
+- Checking and installing missing packages
+- Downloading Gemma 4 E2B (~2.6 GB, one-time, requires free HF account)
+- Downloading Kokoro TTS models (~80 MB, automatic)
+- Starting LiveKit dev server via Docker
+- Running a full pipeline test with audio playback
 
 ### Configuration
 
@@ -107,7 +100,6 @@ Key fields in `config.yaml`:
 ```yaml
 llm:
   model_variant: e2b     # "e2b" (~2.6 GB, fast) or "e4b" (~4 GB, higher quality)
-  model_path: ./models/gemma-4-e2b/gemma-4-E2B-it.litertlm
   enable_tools: true     # lets Gemma call mute/unmute/etc. during the call
 
 stt:
@@ -115,8 +107,9 @@ stt:
   device: cpu            # cpu | cuda | mps
 
 tts:
-  speaker_wav: ./assets/voice_samples/speaker.wav
-  gpu: false
+  voice: af_heart        # af_heart, af_sky, am_adam, am_michael, bf_emma, bm_george …
+  speed: 1.0             # 0.5 = slower, 2.0 = faster
+  lang: en-us            # en-us or en-gb
 ```
 
 The `GEMMA_MODEL_PATH` env var (set automatically by `setup_models.sh`) overrides `llm.model_path`.
@@ -262,15 +255,15 @@ ai-meeting-avatar/
 | Symptom | Fix |
 |---------|-----|
 | `RuntimeError: Call load() first` | You forgot to call `stt.load()` / `tts.load()` / `llm.load()` |
-| `FileNotFoundError: Gemma model not found` | Run `./scripts/setup_models.sh` to download weights |
-| HF download `401 Unauthorized` | Your HF account needs Gemma 4 access — apply at the model page |
-| XTTS download hangs | XTTS-v2 is ~1.8 GB — let it finish, check `~/.local/share/tts` |
-| Empty transcription | Use a larger Whisper model (`stt.model_size: small`) |
-| Gemma responses are slow | E2B on CPU is ~15-30 tok/s; use `device: mps` on Apple Silicon |
-| TTS sounds wrong / robotic | Voice sample too short (<6 s) or too noisy — record a cleaner clip |
+| `FileNotFoundError: Gemma model not found` | Run `./scripts/setup_models.sh` or `ai-avatar onboard` |
+| HF download `401 Unauthorized` | Apply for Gemma 4 access at the HF model page |
+| Empty transcription | Use a larger Whisper model: `stt.model_size: small` |
+| Gemma responses are slow | E2B on CPU ~15-30 tok/s; set `stt.device: mps` on Apple Silicon |
+| Want a different voice | Change `tts.voice` in config.yaml (see voice list in the file) |
+| Kokoro models missing | Run `./scripts/setup_models.sh` — downloads ~80 MB automatically |
 | LiveKit `401 Unauthorized` | API key/secret mismatch — check `.env` and LiveKit server flags |
-| SadTalker `inference.py not found` | Re-run `./scripts/setup_models.sh` |
-| `litert_lm` import error | Run `pip install litert-lm-nightly` |
+| `litert_lm` import error | `pip install litert-lm-nightly` |
+| `kokoro_onnx` import error | `pip install kokoro-onnx onnxruntime` |
 
 ---
 

@@ -117,22 +117,40 @@ else
   yellow "  model_path: \"$LITERTLM_FILE\""
 fi
 
-# ── 3. Coqui XTTS-v2 ─────────────────────────────────────────────────────────
-green "==> [3/5] Coqui XTTS-v2 (TTS voice cloning)"
-echo "  XTTS-v2 downloads to ~/.local/share/tts on first use (~1.8 GB)."
-echo "  Triggering the download now so it's ready when you join a call …"
+# ── 3. Kokoro TTS models ──────────────────────────────────────────────────────
+green "==> [3/5] Kokoro TTS models (~80 MB)"
+echo "  Downloading kokoro-v1.0.onnx and voices-v1.0.bin …"
 
-python3 - <<'PYEOF'
-import os, sys
-os.environ["COQUI_TOS_AGREED"] = "1"
-try:
-    from TTS.api import TTS
-    _ = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=False)
-    print("  XTTS-v2 model cached.")
-except Exception as e:
-    print(f"  WARNING: Could not pre-cache XTTS-v2: {e}")
-    print("  It will be downloaded on first ai-avatar run instead.")
-PYEOF
+KOKORO_DIR="$MODELS_DIR/kokoro"
+mkdir -p "$KOKORO_DIR"
+
+KOKORO_BASE="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+
+for fname in "kokoro-v1.0.onnx" "voices-v1.0.bin"; do
+  dest="$KOKORO_DIR/$fname"
+  if [ -f "$dest" ]; then
+    yellow "  $fname already present — skipping."
+  else
+    echo "  Downloading $fname …"
+    if command -v curl &>/dev/null; then
+      curl -L --progress-bar -o "$dest" "$KOKORO_BASE/$fname"
+    elif command -v wget &>/dev/null; then
+      wget -q --show-progress -O "$dest" "$KOKORO_BASE/$fname"
+    else
+      python3 -c "
+import urllib.request, sys
+url = '$KOKORO_BASE/$fname'
+dest = '$dest'
+print(f'  Fetching {url} …')
+urllib.request.urlretrieve(url, dest)
+print(f'  Saved to {dest}')
+"
+    fi
+    green "  Downloaded: $fname ($(du -sh "$dest" | cut -f1))"
+  fi
+done
+
+green "  Kokoro TTS ready."
 
 # ── 4. SadTalker (Phase 2 — optional) ────────────────────────────────────────
 green "==> [4/5] SadTalker (avatar rendering — Phase 2)"
@@ -197,22 +215,24 @@ echo ""
 echo " Gemma 4 model: $LITERTLM_FILE"
 echo ""
 echo " Next steps:"
-echo "   1. Add a 6-30 s voice sample WAV:"
-echo "      cp /path/to/voice.wav assets/voice_samples/speaker.wav"
-echo ""
-echo "   2. (Optional) Add avatar photo:"
+echo "   1. (Optional) Add avatar photo for Phase 2:"
 echo "      cp /path/to/photo.jpg assets/avatar.jpg"
 echo ""
-echo "   3. Start LiveKit server (local dev):"
+echo "   2. Start LiveKit server (local dev):"
 echo "      docker run --rm -p 7880:7880 -p 7881:7881 \\"
 echo "        -e LIVEKIT_KEYS=\"devkey: secret\" \\"
 echo "        livekit/livekit-server --dev"
 echo ""
-echo "   4. Join a meeting:"
+echo "   3. Join a meeting:"
 echo "      ai-avatar join my-room"
 echo ""
-echo "   5. Test the pipeline without LiveKit:"
+echo "   4. Test the pipeline without LiveKit:"
 echo "      ai-avatar test-pipeline"
 echo ""
 echo " To download the larger E4B model instead:"
 echo "   GEMMA_VARIANT=e4b ./scripts/setup_models.sh"
+echo ""
+echo " To change the TTS voice, edit config.yaml:"
+echo "   tts.voice: af_heart   (default, warm female)"
+echo "   tts.voice: am_adam    (natural male)"
+echo "   tts.voice: bf_emma    (British female)"

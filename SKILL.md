@@ -52,18 +52,18 @@ The wizard handles everything interactively:
 | Step | What happens |
 |------|-------------|
 | 1 — Dependencies | Checks and auto-installs missing packages |
-| 2 — Ollama LLM | Starts Ollama if not running, pulls the model |
-| 3 — Voice recording | Records 15 s from mic with a countdown bar |
+| 2 — Gemma 4 E2B | Logs into HF, downloads ~2.6 GB model (one-time) |
+| 3 — Kokoro TTS | Downloads ~80 MB voice models, plays a 2-second audio preview |
 | 4 — LiveKit | Starts the local media server via Docker |
-| 5 — Pipeline test | Speaks a test sentence in the cloned voice |
+| 5 — Pipeline test | Runs full STT → LLM → TTS with audio playback |
 | 6 — Summary | Shows status and exact next command |
 
 **If a step fails**, read the error shown in the terminal and handle it:
 
-- `sounddevice` error → `pip install sounddevice` then re-run
-- Ollama not found → guide user to [ollama.com](https://ollama.com), then `ollama serve`
+- `kokoro_onnx` not found → `pip install kokoro-onnx onnxruntime` then re-run
+- HF `401` error → guide user to apply for Gemma 4 access at huggingface.co
 - Docker not found → skip LiveKit step, have them install Docker first
-- Voice sample too quiet → re-run `ai-avatar onboard` and re-record closer to mic
+- `litert_lm` not found → `pip install litert-lm-nightly` then re-run
 
 ---
 
@@ -119,12 +119,13 @@ Ask the user which symptom they're seeing, then apply the fix:
 |---------|-----|
 | "No speech detected" | Speak louder / closer to mic; lower `stt.vad_energy_threshold` in config.yaml |
 | Response is very slow | Switch to `stt.model_size: tiny`; Gemma E2B on Apple Silicon MPS is fastest |
-| Voice doesn't sound like me | Re-record in a quieter room: `ai-avatar onboard` → skip to Step 3 |
-| `FileNotFoundError: Gemma model not found` | Run `./scripts/setup_models.sh` to download E2B weights |
+| Want a different voice | Change `tts.voice` in config.yaml — no re-download needed |
+| `FileNotFoundError: Gemma model not found` | Run `ai-avatar onboard` or `./scripts/setup_models.sh` |
 | HF `401` on model download | Apply for Gemma 4 access at huggingface.co/litert-community/gemma-4-E2B-it-litert-lm |
+| Kokoro models missing | Run `./scripts/setup_models.sh` step 3 |
 | `litert_lm` not found | `pip install litert-lm-nightly` |
+| `kokoro_onnx` not found | `pip install kokoro-onnx onnxruntime` |
 | "LiveKit connection refused" | Start LiveKit (see Step B above) |
-| TTS download stuck | XTTS-v2 is ~1.8 GB — wait; check `~/.local/share/tts` |
 | Can't hear avatar in Meet | BlackHole not set as mic in Meet settings |
 
 ---
@@ -147,11 +148,16 @@ llm:
 stt:
   model_size: tiny
 
-# Use Apple Silicon / CUDA GPU for TTS (faster)
+# Change voice (no re-download needed — all voices in voices-v1.0.bin)
 tts:
-  gpu: true
+  voice: am_adam      # natural male
+  # voice: af_sky     # bright female
+  # voice: bf_emma    # British female
+  # voice: bm_george  # British male
+  speed: 1.0
+  lang: en-us         # or en-gb for British voices
 
-# Make the avatar more talkative / brief
+# Make the avatar more concise / detailed
 agent:
   system_prompt: |
     You are attending this meeting on behalf of [Name].

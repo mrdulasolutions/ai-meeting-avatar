@@ -66,16 +66,24 @@ llm:
   # Keep last N turns of conversation in context (managed by LiteRT-LM internally)
   history_turns: 10
 
-# ── Text-to-Speech (Coqui XTTS-v2) ──────────────────────────────
+# ── Text-to-Speech (Kokoro-ONNX) ─────────────────────────────────
+# Kokoro is a lightweight 82M-parameter TTS model. Runs on CPU via
+# ONNX Runtime — no GPU, no voice samples, no extra setup required.
+# Models (~80 MB) download automatically on first run.
 tts:
-  # Model identifier accepted by Coqui TTS library
-  model: "tts_models/multilingual/multi-dataset/xtts_v2"
-  # Path to a 6-30 second WAV clip of the voice to clone
-  speaker_wav: "./assets/voice_samples/speaker.wav"
-  language: "en"
-  speed: 1.0          # Speech speed multiplier
-  sample_rate: 24000  # Output sample rate (XTTS-v2 native)
-  gpu: false          # Set true if CUDA GPU is available
+  # Voice preset — pick one from the lists below:
+  #   American English (lang: en-us):
+  #     af_heart   ← warm female, recommended default
+  #     af_sky, af_sarah, af_nova, af_bella
+  #     am_adam, am_michael
+  #   British English (lang: en-gb):
+  #     bf_emma, bf_isabella, bm_george, bm_lewis
+  voice: "af_heart"
+  speed: 1.0          # speech rate multiplier (0.5 = slow, 2.0 = fast)
+  lang: "en-us"       # "en-us" or "en-gb"
+  # Directory where kokoro-v1.0.onnx and voices-v1.0.bin are stored
+  # setup_models.sh downloads them here automatically
+  model_dir: "./models/kokoro"
 
 # ── Avatar Rendering (Phase 2) ───────────────────────────────────
 avatar:

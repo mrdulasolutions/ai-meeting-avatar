@@ -1,15 +1,22 @@
 """
 Interactive onboarding wizard for ai-meeting-avatar.
 
-Walks the user through every setup step with live status, voice recording,
-and a final pipeline test — no terminal knowledge required.
+Walks the user through every setup step with live status indicators.
+No manual file-placing or terminal knowledge required.
+
+Steps:
+  1 — Check + auto-install Python dependencies
+  2 — Download Gemma 4 E2B (LLM) via Hugging Face
+  3 — Download Kokoro TTS models (~80 MB, auto)
+  4 — Start LiveKit dev server (via Docker)
+  5 — End-to-end pipeline test (STT → LLM → TTS)
+  6 — Summary + next steps
 """
 
 from __future__ import annotations
 
 import asyncio
 import importlib
-import os
 import shutil
 import subprocess
 import sys
@@ -29,12 +36,8 @@ from rich.progress import (
 from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 from rich.table import Table
-from rich import print as rprint
 
 console = Console()
-
-VOICE_SAMPLE_PATH = Path("assets/voice_samples/speaker.wav")
-VOICE_SAMPLE_SECONDS = 15  # seconds to record
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -62,7 +65,7 @@ def _step(number: int, total: int, title: str) -> None:
     console.print()
 
 
-# ── Individual steps ───────────────────────────────────────────────────────────
+# ── Steps ──────────────────────────────────────────────────────────────────────
 
 
 def step_welcome() -> None:
@@ -70,8 +73,8 @@ def step_welcome() -> None:
         Panel.fit(
             "[bold white]AI Meeting Avatar[/bold white]\n"
             "[dim]Local voice agent for Google Meet & Zoom[/dim]\n\n"
-            "This wizard will set everything up in about [bold]5 minutes[/bold].\n"
-            "You'll need to speak into your mic once to clone your voice.",
+            "This wizard sets everything up in [bold]5 minutes[/bold].\n"
+            "No voice recording, no API keys, no GPU needed.",
             title="[bold cyan]Welcome[/bold cyan]",
             border_style="cyan",
             padding=(1, 4),
@@ -82,18 +85,20 @@ def step_welcome() -> None:
 
 
 def step_check_deps() -> bool:
-    """Check Python packages and system tools. Return True if all OK."""
-    _step(1, 6, "Checking dependencies")
+    """Check Python packages and system tools. Auto-installs if missing."""
+    _step(1, 5, "Checking dependencies")
 
     py_packages = [
         ("faster_whisper", "faster-whisper"),
-        ("ollama", "ollama"),
-        ("TTS", "TTS (Coqui)"),
+        ("litert_lm", "litert-lm-nightly"),
+        ("kokoro_onnx", "kokoro-onnx"),
+        ("onnxruntime", "onnxruntime"),
         ("livekit", "livekit"),
         ("livekit.agents", "livekit-agents"),
         ("numpy", "numpy"),
         ("scipy", "scipy"),
         ("sounddevice", "sounddevice"),
+        ("soundfile", "soundfile"),
         ("rich", "rich"),
         ("yaml", "PyYAML"),
     ]
@@ -107,21 +112,19 @@ def step_check_deps() -> bool:
             _fail(f"{name}  [dim](missing)[/dim]")
             missing_py.append(name)
 
-    system_tools = ["ffmpeg", "git", "docker"]
-    missing_tools = []
     console.print()
+    system_tools = ["ffmpeg", "git", "docker"]
     for tool in system_tools:
         if shutil.which(tool):
             _ok(tool)
         else:
             _warn(f"{tool}  [dim](not found — some features may not work)[/dim]")
-            missing_tools.append(tool)
 
     if missing_py:
         console.print()
         _info("Installing missing Python packages …")
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-e", "."],
+            [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
             capture_output=True,
             text=True,
         )
@@ -132,18 +135,12 @@ def step_check_deps() -> bool:
             console.print(f"  [dim]{result.stderr[-400:]}[/dim]")
             return False
 
-    if "ffmpeg" in missing_tools:
-        console.print()
-        _warn("ffmpeg is missing. Install it:")
-        _info("  macOS:   brew install ffmpeg")
-        _info("  Ubuntu:  sudo apt install ffmpeg")
-
     return True
 
 
 def step_gemma_download() -> bool:
-    """Download Gemma 4 E2B weights from Hugging Face. Return True if ready."""
-    _step(2, 6, "LLM — Gemma 4 (Google AI Edge)")
+    """Download Gemma 4 E2B weights from Hugging Face."""
+    _step(2, 5, "LLM — Gemma 4 E2B (Google AI Edge)")
 
     from .config import load_config  # noqa: PLC0415
 
@@ -151,27 +148,20 @@ def step_gemma_download() -> bool:
     model_path = Path(cfg.llm.model_path)
 
     # Check if already downloaded
-    if model_path.exists():
-        size = model_path.stat().st_size / (1024 ** 3)
-        _ok(f"Gemma 4 model already present: {model_path} ({size:.1f} GB)")
-        return True
-
-    # Check parent dir for any .litertlm file
-    parent = model_path.parent
-    existing = list(parent.glob("*.litertlm")) if parent.exists() else []
+    existing = list(model_path.parent.glob("*.litertlm")) if model_path.parent.exists() else []
     if existing:
-        _ok(f"Found model: {existing[0]}")
+        size_gb = existing[0].stat().st_size / (1024 ** 3)
+        _ok(f"Gemma 4 E2B already present: {existing[0].name} ({size_gb:.1f} GB)")
         return True
 
     console.print(
         Panel(
-            "[white]Gemma 4 E2B runs entirely on your machine — no API keys, no cloud.\n\n"
+            "[white]Gemma 4 E2B runs entirely on your machine — no cloud, no API keys.\n\n"
             "Requirements:\n"
-            "  • [bold]Hugging Face account[/bold] (free) with Gemma 4 access approved\n"
-            "  • Apply at: [cyan]https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm[/cyan]\n"
-            "  • Download size: [bold]~2.6 GB[/bold]\n\n"
-            "You only need to do this once.",
-            title="[bold yellow]Gemma 4 E2B Download[/bold yellow]",
+            "  • Free [bold]Hugging Face account[/bold] with Gemma 4 access\n"
+            "  • Apply at: [cyan]huggingface.co/litert-community/gemma-4-E2B-it-litert-lm[/cyan]\n"
+            "  • Download size: [bold]~2.6 GB[/bold]  (one-time)",
+            title="[bold yellow]Gemma 4 E2B[/bold yellow]",
             border_style="yellow",
             padding=(1, 2),
         )
@@ -182,203 +172,140 @@ def step_gemma_download() -> bool:
         _warn("Skipped. Run setup_models.sh later to download.")
         return False
 
-    # Check HF CLI
+    # HF login check
     try:
         result = subprocess.run(
-            ["huggingface-cli", "whoami"], capture_output=True, text=True, timeout=10
+            ["huggingface-cli", "whoami"],
+            capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
-            username = result.stdout.strip().split("\n")[0]
-            _ok(f"Logged in to Hugging Face as: {username}")
+            _ok(f"Logged in as: {result.stdout.strip().split(chr(10))[0]}")
         else:
-            raise subprocess.CalledProcessError(result.returncode, "whoami")
+            raise subprocess.CalledProcessError(1, "whoami")
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        _info("You need to log in to Hugging Face first.")
-        _info("Get your token at: https://huggingface.co/settings/tokens")
+        _info("You need a Hugging Face token. Get one at: huggingface.co/settings/tokens")
         console.print()
-        token = Prompt.ask("  Paste your HF token (input hidden)", password=True)
-        login_result = subprocess.run(
+        token = Prompt.ask("  Paste your HF token (hidden)", password=True)
+        login = subprocess.run(
             ["huggingface-cli", "login", "--token", token],
             capture_output=True, text=True,
         )
-        if login_result.returncode != 0:
-            _fail("HF login failed. Check your token and try again.")
+        if login.returncode != 0:
+            _fail("HF login failed — check your token.")
             return False
         _ok("Logged in to Hugging Face.")
 
-    # Download model
-    parent.mkdir(parents=True, exist_ok=True)
+    # Download
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     repo = cfg.llm.hf_repo_e2b
     console.print()
-    _info(f"Downloading {repo} → {parent}")
-    _info("This is ~2.6 GB and may take 5-20 minutes depending on your connection.")
-    console.print()
+    _info(f"Downloading {repo} (~2.6 GB) …")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[cyan]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        task = progress.add_task("Downloading Gemma 4 E2B …", total=None)
-
-        dl_result = subprocess.run(
-            [
-                "huggingface-cli", "download",
-                repo,
-                "--local-dir", str(parent),
-                "--local-dir-use-symlinks", "False",
-                "--include", "*.litertlm", "*.json", "*.md",
-            ],
-            capture_output=True,
-            text=True,
+    with Progress(SpinnerColumn(), TextColumn("[cyan]{task.description}"),
+                  TimeElapsedColumn(), console=console, transient=False) as p:
+        p.add_task("Downloading Gemma 4 E2B …", total=None)
+        dl = subprocess.run(
+            ["huggingface-cli", "download", repo,
+             "--local-dir", str(model_path.parent),
+             "--local-dir-use-symlinks", "False",
+             "--include", "*.litertlm", "*.json", "*.md"],
+            capture_output=True, text=True,
         )
-        progress.stop()
 
-    if dl_result.returncode != 0:
+    if dl.returncode != 0:
         _fail("Download failed.")
-        console.print(f"  [dim]{dl_result.stderr[-500:]}[/dim]")
-        console.print()
-        _info("If you see a 401 error, your account may not have access yet.")
-        _info("Apply at: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm")
+        console.print(f"  [dim]{dl.stderr[-500:]}[/dim]")
+        _info("If you see 401, apply for model access first.")
         return False
 
-    # Find the downloaded .litertlm file
-    litertlm_files = list(parent.glob("*.litertlm"))
-    if not litertlm_files:
+    files = list(model_path.parent.glob("*.litertlm"))
+    if not files:
         _fail("No .litertlm file found after download.")
         return False
 
-    litertlm_path = litertlm_files[0]
-    size_gb = litertlm_path.stat().st_size / (1024 ** 3)
-    _ok(f"Downloaded: {litertlm_path.name} ({size_gb:.1f} GB)")
+    _ok(f"Downloaded: {files[0].name} ({files[0].stat().st_size / 1e9:.1f} GB)")
 
-    # Write the resolved path to .env
+    # Write path to .env
     env_path = Path(".env")
-    env_line = f"GEMMA_MODEL_PATH={litertlm_path}"
+    env_line = f"GEMMA_MODEL_PATH={files[0]}"
     if env_path.exists():
-        lines = env_path.read_text().splitlines()
-        lines = [l for l in lines if not l.startswith("GEMMA_MODEL_PATH=")]
+        lines = [l for l in env_path.read_text().splitlines()
+                 if not l.startswith("GEMMA_MODEL_PATH=")]
         lines.append(env_line)
         env_path.write_text("\n".join(lines) + "\n")
     else:
         env_path.write_text(env_line + "\n")
 
-    _ok(f"Model path saved to .env")
+    _ok("Path saved to .env")
     return True
 
 
-def step_record_voice() -> bool:
-    """Record a voice sample from the microphone. Return True if saved."""
-    _step(3, 6, "Voice cloning — record your voice")
+def step_tts_setup() -> bool:
+    """Download Kokoro TTS models and play a test sentence."""
+    _step(3, 5, "TTS — Kokoro voice (~80 MB)")
 
-    if VOICE_SAMPLE_PATH.exists():
-        console.print(
-            f"  Voice sample already exists at [cyan]{VOICE_SAMPLE_PATH}[/cyan]"
-        )
-        if not Confirm.ask("  Re-record it?", default=False):
-            _ok("Using existing voice sample.")
-            return True
+    from .config import load_config  # noqa: PLC0415
+    from .tts import DEFAULT_MODEL_DIR, download_models  # noqa: PLC0415
 
+    cfg = load_config()
+    model_dir = Path(cfg.tts.model_dir)
+
+    # Check if already downloaded
+    if (model_dir / "kokoro-v1.0.onnx").exists() and (model_dir / "voices-v1.0.bin").exists():
+        _ok(f"Kokoro models already present at {model_dir}")
+    else:
+        _info("Downloading Kokoro TTS models (~80 MB) …")
+        try:
+            with Progress(SpinnerColumn(), TextColumn("[cyan]{task.description}"),
+                          TimeElapsedColumn(), console=console, transient=True) as p:
+                p.add_task("Downloading kokoro-v1.0.onnx and voices-v1.0.bin …", total=None)
+                download_models(model_dir)
+            _ok("Kokoro models downloaded.")
+        except Exception as exc:
+            _fail(f"Download failed: {exc}")
+            return False
+
+    # Quick audio test
+    console.print()
+    _info(f"Testing voice '{cfg.tts.voice}' …")
     try:
         import sounddevice as sd  # noqa: PLC0415
-        import numpy as np  # noqa: PLC0415
-        import scipy.io.wavfile as wav_io  # noqa: PLC0415
-    except ImportError:
-        _fail("sounddevice / numpy / scipy not installed.")
-        _info("Run:  pip install sounddevice numpy scipy")
-        return False
+        from kokoro_onnx import Kokoro  # noqa: PLC0415
 
-    console.print(
-        Panel(
-            f"[white]You'll record [bold]{VOICE_SAMPLE_SECONDS} seconds[/bold] of your voice.\n\n"
-            "Tips for a good clone:\n"
-            "  • Speak in a [bold]quiet room[/bold] — no background noise\n"
-            "  • Use your [bold]natural speaking voice[/bold] and pace\n"
-            "  • Read anything aloud — a news article, a book, anything\n"
-            "  • Stay [bold]15-20 cm from the mic[/bold]",
-            title="[bold yellow]Voice Recording Tips[/bold yellow]",
-            border_style="yellow",
-            padding=(1, 2),
+        kokoro = Kokoro(
+            str(model_dir / "kokoro-v1.0.onnx"),
+            str(model_dir / "voices-v1.0.bin"),
         )
-    )
-    console.print()
+        samples, sr = kokoro.create(
+            "Hello! Your AI meeting avatar voice is ready.",
+            voice=cfg.tts.voice,
+            speed=cfg.tts.speed,
+            lang=cfg.tts.lang,
+        )
+        console.print("  [dim]Playing 2-second preview …[/dim]")
+        sd.play(samples, sr)
+        sd.wait()
+        _ok("TTS is working! That's what the avatar will sound like.")
+    except ImportError:
+        _warn("sounddevice not installed — skipping audio preview.")
+        _ok("Kokoro models ready (audio test skipped).")
+    except Exception as exc:
+        _warn(f"Audio preview failed: {exc}")
+        _ok("Kokoro models downloaded (preview unavailable).")
 
-    sample_text = (
-        "The quick brown fox jumps over the lazy dog. "
-        "Artificial intelligence is transforming the way we communicate and collaborate. "
-        "In today's meeting, I'd like to walk through our quarterly results and discuss "
-        "the roadmap for the next six months. Please feel free to ask questions at any time."
-    )
-    console.print(f"  [dim]Suggested reading:[/dim]\n  [italic]{sample_text}[/italic]")
-    console.print()
-
-    Confirm.ask("  Ready? Recording starts immediately when you press Enter", default=True)
-
-    SAMPLE_RATE = 16_000
-    recorded_data = None
-
-    with Progress(
-        BarColumn(bar_width=40),
-        TaskProgressColumn(),
-        TextColumn("[cyan]{task.description}"),
-        console=console,
-        transient=False,
-    ) as progress:
-        task = progress.add_task("Recording …", total=VOICE_SAMPLE_SECONDS * 10)
-
-        frames = []
-
-        def audio_callback(indata, frame_count, time_info, status):
-            frames.append(indata.copy())
-
-        with sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            callback=audio_callback,
-        ):
-            for tick in range(VOICE_SAMPLE_SECONDS * 10):
-                time.sleep(0.1)
-                remaining = VOICE_SAMPLE_SECONDS - tick // 10
-                progress.update(
-                    task,
-                    advance=1,
-                    description=f"Recording … {remaining}s left",
-                )
-
-        recorded_data = np.concatenate(frames, axis=0).flatten()
-
-    console.print()
-    _ok(f"Recorded {len(recorded_data) / SAMPLE_RATE:.1f}s of audio.")
-
-    # Save as WAV (XTTS needs 22050 Hz+; upsample if needed)
-    VOICE_SAMPLE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    # XTTS-v2 works best with 22050 Hz
-    from scipy.signal import resample as scipy_resample  # noqa: PLC0415
-
-    target_sr = 22_050
-    num_samples = int(len(recorded_data) * target_sr / SAMPLE_RATE)
-    audio_22k = scipy_resample(recorded_data, num_samples).astype("float32")
-    audio_int16 = (audio_22k * 32_767).clip(-32_768, 32_767).astype("int16")
-
-    wav_io.write(str(VOICE_SAMPLE_PATH), target_sr, audio_int16)
-    _ok(f"Voice sample saved → [cyan]{VOICE_SAMPLE_PATH}[/cyan]")
     return True
 
 
 def step_livekit() -> bool:
-    """Check if LiveKit is running, offer to start it. Return True if ready."""
-    _step(4, 6, "LiveKit server")
+    """Check if LiveKit is running; offer to start it via Docker."""
+    _step(4, 5, "LiveKit server")
 
     import urllib.request  # noqa: PLC0415
 
     livekit_url = "http://localhost:7880"
     try:
         urllib.request.urlopen(livekit_url, timeout=2)
-        _ok("LiveKit server already running at localhost:7880")
+        _ok("LiveKit already running at localhost:7880")
         return True
     except Exception:
         pass
@@ -387,13 +314,10 @@ def step_livekit() -> bool:
     console.print()
 
     if not shutil.which("docker"):
-        _warn("Docker not found — can't auto-start LiveKit.")
-        console.print()
-        console.print("  [dim]Install Docker, then run:[/dim]")
+        _warn("Docker not installed — can't auto-start LiveKit.")
+        console.print("  [dim]Install Docker from docker.com, then run:[/dim]")
         console.print(
-            "  [bold]docker run --rm -p 7880:7880 -p 7881:7881 "
-            '-e LIVEKIT_KEYS="devkey: secret" '
-            "livekit/livekit-server --dev[/bold]"
+            '  [bold]docker run --rm -p 7880:7880 -p 7881:7881 -e LIVEKIT_KEYS="devkey: secret" livekit/livekit-server --dev[/bold]'
         )
         console.print()
         Confirm.ask("  Press Enter once LiveKit is running", default=True)
@@ -402,83 +326,76 @@ def step_livekit() -> bool:
     if Confirm.ask("  Start LiveKit dev server via Docker now?", default=True):
         _info("Starting LiveKit …")
         subprocess.Popen(
-            [
-                "docker", "run", "--rm",
-                "-p", "7880:7880",
-                "-p", "7881:7881",
-                "-e", "LIVEKIT_KEYS=devkey: secret",
-                "livekit/livekit-server",
-                "--dev",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            ["docker", "run", "--rm",
+             "-p", "7880:7880", "-p", "7881:7881",
+             "-e", "LIVEKIT_KEYS=devkey: secret",
+             "livekit/livekit-server", "--dev"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         time.sleep(4)
         try:
             urllib.request.urlopen(livekit_url, timeout=5)
             _ok("LiveKit is running at localhost:7880")
-            return True
         except Exception:
-            _warn("LiveKit may still be starting. Continuing anyway …")
-            return True
+            _warn("LiveKit may still be starting — continuing anyway.")
     else:
-        _info("Skipped — start LiveKit before joining a call.")
-        return True
+        _info("Skipped. Start LiveKit before joining a call.")
+
+    return True
 
 
 def step_pipeline_test() -> bool:
-    """Run a quick STT→LLM→TTS test. Return True if it worked."""
-    _step(5, 6, "Pipeline test")
+    """Run STT → LLM → TTS end-to-end. Return True if it passes."""
+    _step(5, 5, "End-to-end test")
 
-    console.print("  Running a quick end-to-end test (this loads all models) …")
-    console.print("  [dim]First run may take 2-5 minutes while models cache.[/dim]")
+    console.print("  Runs the full pipeline (loads all models on first run).")
+    console.print("  [dim]May take 1-3 minutes while models initialise.[/dim]")
     console.print()
 
     if not Confirm.ask("  Run the test now? (recommended)", default=True):
-        _info("Skipped. Run later with:  ai-avatar test-pipeline --text 'hello'")
+        _info("Skipped. Run later:  ai-avatar test-pipeline --text 'hello'")
         return True
 
     try:
         result = subprocess.run(
-            [
-                sys.executable, "-m", "ai_meeting_avatar.main",
-                "test-pipeline",
-                "--text", "Hello! I am your AI meeting avatar. The setup is complete.",
-            ],
+            [sys.executable, "-m", "ai_meeting_avatar.main",
+             "test-pipeline",
+             "--text", "Setup complete. I am your AI meeting avatar, ready to join calls."],
             timeout=300,
         )
         if result.returncode == 0:
             _ok("Pipeline test passed!")
             return True
         else:
-            _warn("Pipeline test had issues — check output above.")
+            _warn("Test had issues — see output above.")
             return False
     except subprocess.TimeoutExpired:
-        _warn("Test timed out (models may still be downloading). Try again with:")
+        _warn("Timed out. Models may still be initialising. Try later:")
         _info("  ai-avatar test-pipeline --text 'hello'")
         return False
-    except Exception as e:
-        _fail(f"Test failed: {e}")
+    except Exception as exc:
+        _fail(f"Test failed: {exc}")
         return False
 
 
-def step_summary(voice_ok: bool, ollama_ok: bool, livekit_ok: bool, test_ok: bool) -> None:
-    """Print final summary and next steps."""
-    _step(6, 6, "You're all set!")
+def step_summary(deps_ok: bool, llm_ok: bool, tts_ok: bool, livekit_ok: bool, test_ok: bool) -> None:
+    """Print the final status table and next-steps panel."""
+    console.print()
+    console.print(Rule("[bold cyan]Step 6/5 — You're all set![/bold cyan]"))
+    console.print()
 
     table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("Status", style="bold", width=4)
+    table.add_column("Icon", style="bold", width=4)
     table.add_column("Component")
 
-    def row(ok: bool, label: str):
-        icon = "[green]✓[/green]" if ok else "[yellow]![/yellow]"
-        table.add_row(icon, label)
+    def row(ok: bool, label: str) -> None:
+        table.add_row("[green]✓[/green]" if ok else "[yellow]![/yellow]", label)
 
-    row(True, "Python dependencies")
-    row(ollama_ok, "Gemma 4 E2B (LiteRT-LM)")
-    row(voice_ok, "Voice sample recorded")
-    row(livekit_ok, "LiveKit server")
-    row(test_ok, "Pipeline smoke test")
+    row(deps_ok, "Python dependencies")
+    row(llm_ok, "Gemma 4 E2B — local LLM (no server needed)")
+    row(tts_ok, "Kokoro TTS — natural voice, no cloning")
+    row(livekit_ok, "LiveKit media server")
+    row(test_ok, "End-to-end pipeline test")
 
     console.print(table)
     console.print()
@@ -486,15 +403,16 @@ def step_summary(voice_ok: bool, ollama_ok: bool, livekit_ok: bool, test_ok: boo
     console.print(
         Panel(
             "[bold white]To join a meeting:[/bold white]\n\n"
-            "  1. Start LiveKit (if not already running):\n"
+            "  1. Make sure LiveKit is running:\n"
             "     [cyan]docker run --rm -p 7880:7880 -p 7881:7881 \\\n"
             '       -e LIVEKIT_KEYS="devkey: secret" \\\n'
             "       livekit/livekit-server --dev[/cyan]\n\n"
             "  2. Join a room:\n"
             "     [cyan]ai-avatar join my-meeting[/cyan]\n\n"
-            "  3. Connect your Google Meet / Zoom audio via BlackHole or similar\n"
-            "     (see README.md → Google Meet / Zoom integration)\n\n"
-            "[dim]Run  ai-avatar --help  for all commands.[/dim]",
+            "  3. Route audio to Google Meet / Zoom via BlackHole:\n"
+            "     [dim]brew install blackhole-2ch → set as mic in Meet/Zoom[/dim]\n\n"
+            "[dim]Change voice: edit  tts.voice  in config.yaml[/dim]\n"
+            "[dim]Run  ai-avatar --help  for all commands[/dim]",
             title="[bold green]Next Steps[/bold green]",
             border_style="green",
             padding=(1, 2),
@@ -502,7 +420,7 @@ def step_summary(voice_ok: bool, ollama_ok: bool, livekit_ok: bool, test_ok: boo
     )
 
 
-# ── Main entry ─────────────────────────────────────────────────────────────────
+# ── Entry ──────────────────────────────────────────────────────────────────────
 
 
 async def run_onboarding() -> None:
@@ -511,17 +429,18 @@ async def run_onboarding() -> None:
 
     deps_ok = step_check_deps()
     if not deps_ok:
-        _fail("Dependency check failed. Fix the issues above and re-run:  ai-avatar onboard")
+        _fail("Dependency check failed. Fix the issues above then re-run:  ai-avatar onboard")
         sys.exit(1)
 
     llm_ok = step_gemma_download()
-    voice_ok = step_record_voice()
+    tts_ok = step_tts_setup()
     livekit_ok = step_livekit()
     test_ok = step_pipeline_test()
 
     step_summary(
-        voice_ok=voice_ok,
-        ollama_ok=llm_ok,
+        deps_ok=deps_ok,
+        llm_ok=llm_ok,
+        tts_ok=tts_ok,
         livekit_ok=livekit_ok,
         test_ok=test_ok,
     )

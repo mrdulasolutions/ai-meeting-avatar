@@ -84,18 +84,16 @@ class LLMConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    model: str = "tts_models/multilingual/multi-dataset/xtts_v2"
-    speaker_wav: str = "./assets/voice_samples/speaker.wav"
-    language: str = "en"
+    # Voice preset — no voice sample needed
+    # American English: af_heart, af_sky, af_sarah, af_nova, am_adam, am_michael
+    # British English:  bf_emma, bf_isabella, bm_george, bm_lewis  (set lang to "en-gb")
+    voice: str = "af_heart"
     speed: float = 1.0
-    sample_rate: int = 24000
-    gpu: bool = False
-
-    @model_validator(mode="after")
-    def _override_from_env(self) -> "TTSConfig":
-        if gpu_env := os.getenv("TTS_GPU"):
-            self.gpu = gpu_env.lower() in ("1", "true", "yes")
-        return self
+    lang: str = "en-us"
+    # Directory where kokoro-v1.0.onnx and voices-v1.0.bin are stored
+    model_dir: str = "./models/kokoro"
+    # Kokoro native output sample rate (do not change)
+    sample_rate: int = 24_000
 
 
 class AvatarConfig(BaseModel):

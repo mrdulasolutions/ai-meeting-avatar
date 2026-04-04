@@ -55,23 +55,22 @@ async def main() -> None:
     )
     stt.load()
 
-    logger.info("Initialising LLM (Ollama %s) …", cfg.llm.model)
+    logger.info("Initialising LLM (Gemma 4, %s) …", cfg.llm.model_path)
     llm = OllamaLLM(
-        model=cfg.llm.model,
-        host=cfg.llm.host,
-        temperature=cfg.llm.temperature,
-        max_tokens=cfg.llm.max_tokens,
+        model_path=cfg.llm.model_path,
         system_prompt=cfg.agent.system_prompt,
+        enable_tools=cfg.llm.enable_tools,
+        max_tokens=cfg.llm.max_tokens,
+        temperature=cfg.llm.temperature,
     )
     llm.load()
 
-    logger.info("Loading TTS (XTTS-v2) …")
+    logger.info("Loading TTS (Kokoro, voice=%s) …", cfg.tts.voice)
     tts = CoquiXTTS(
-        model_name=cfg.tts.model,
-        speaker_wav=cfg.tts.speaker_wav,
-        language=cfg.tts.language,
+        voice=cfg.tts.voice,
         speed=cfg.tts.speed,
-        gpu=cfg.tts.gpu,
+        lang=cfg.tts.lang,
+        model_dir=cfg.tts.model_dir,
     )
     tts.load()
 
@@ -125,14 +124,6 @@ async def main() -> None:
 
     # ── TTS ────────────────────────────────────────────────────────────────────
     print("\nSynthesising speech …")
-
-    if not Path(cfg.tts.speaker_wav).exists():
-        print(
-            f"\n[WARNING] Speaker WAV not found at {cfg.tts.speaker_wav}.\n"
-            "Add a 6-30 s voice sample and update config.yaml (tts.speaker_wav).\n"
-            "Skipping TTS."
-        )
-        return
 
     audio_out, sr = await tts.synthesize(reply)
     print(f"[TTS] Synthesised {len(audio_out)/sr:.2f}s of audio at {sr} Hz")
