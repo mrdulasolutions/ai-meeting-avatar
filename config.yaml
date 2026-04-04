@@ -17,12 +17,30 @@ agent:
 
 # ── LiveKit ───────────────────────────────────────────────────────
 # LiveKit is used as the real-time media transport layer.
-# For Google Meet / Zoom, use a LiveKit SIP or RTMP bridge, or run
-# a LiveKit room and join via browser/plugin.
+#
+# ── Local dev (Docker, same machine only) ─────────────────────────
+#   url: "ws://localhost:7880"
+#   api_key: "devkey"
+#   api_secret: "secret"
+#
+#   Start server:
+#     docker run --rm -d --name livekit-dev \
+#       -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
+#       livekit/livekit-server --dev --bind 0.0.0.0
+#
+# ── LiveKit Cloud (remote access, free tier available) ────────────
+#   Sign up at https://cloud.livekit.io, create a project, then
+#   copy the URL, API key, and secret from the dashboard.
+#   Recommended: put credentials in .env rather than this file.
+#
+#   url: "wss://your-project.livekit.cloud"
+#   api_key: ""     # set LIVEKIT_API_KEY in .env or environment
+#   api_secret: ""  # set LIVEKIT_API_SECRET in .env or environment
+#
 livekit:
-  url: "ws://localhost:7880"          # LiveKit server WebSocket URL
-  api_key: "devkey"                   # Set via LIVEKIT_API_KEY env var
-  api_secret: "secret"               # Set via LIVEKIT_API_SECRET env var
+  url: "ws://localhost:7880"          # override with LIVEKIT_URL env var
+  api_key: "devkey"                   # override with LIVEKIT_API_KEY env var
+  api_secret: "secret"               # override with LIVEKIT_API_SECRET env var
   room: ""                            # Room name (can be passed on CLI)
 
 # ── Speech-to-Text (Whisper) ─────────────────────────────────────

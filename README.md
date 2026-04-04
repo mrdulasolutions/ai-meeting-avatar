@@ -285,22 +285,40 @@ The rendered MP4 is pushed to an OBS **Media Source** named `"AI Avatar"` (confi
 
 ## Deploying to production
 
-For remote access (joining from a phone, another country, or embedding into a product), the LiveKit server must be publicly accessible. Two options:
+For remote access (phone, another country, embedding into a product), the LiveKit server must be publicly accessible.
 
-**LiveKit Cloud (easiest)**
-1. Sign up at [livekit.io/cloud](https://livekit.io/cloud) — has a free tier
-2. Get your cloud URL (`wss://your-project.livekit.cloud`), API key, and secret
-3. Update `config.yaml` or set env vars:
+> **Note**: LiveKit Cloud project creation requires browser-based OAuth — there is no API or CLI to script it. Create the project in the dashboard once, then paste the credentials into `.env`.
+
+### LiveKit Cloud (easiest, free tier available)
+
+1. Sign up at [cloud.livekit.io](https://cloud.livekit.io) and create a project
+2. From the project dashboard, copy:
+   - **WebSocket URL** — looks like `wss://your-project.livekit.cloud`
+   - **API Key** and **API Secret**
+3. Add to your `.env` file (never commit these):
    ```bash
-   export LIVEKIT_URL=wss://your-project.livekit.cloud
-   export LIVEKIT_API_KEY=your-key
-   export LIVEKIT_API_SECRET=your-secret
+   LIVEKIT_URL=wss://your-project.livekit.cloud
+   LIVEKIT_API_KEY=APIxxxxxxxxxxxxxxx
+   LIVEKIT_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    ```
-4. Run the agent on your Mac as normal — it connects out to the cloud server
-5. Browser/phone clients connect to the same cloud URL — no localhost needed
+4. Run the agent — it reads from `.env` automatically:
+   ```bash
+   ai-avatar join my-room
+   ```
+5. Generate a token for browser/phone clients:
+   ```bash
+   ai-avatar generate-token --room my-room --identity user
+   ```
+6. On the phone, open:
+   ```
+   https://meet.livekit.io/custom/?liveKitUrl=wss://your-project.livekit.cloud&token=<token>
+   ```
 
-**Self-hosted (VPS/cloud server)**
-Deploy LiveKit Server on any Linux VPS with a public IP. See the [LiveKit self-hosting docs](https://docs.livekit.io/home/self-hosting/local/).
+The agent runs on your Mac and connects *out* to the cloud server. Phone and browser clients also connect to the cloud server. No port forwarding, no localhost restrictions.
+
+### Self-hosted (VPS / cloud server)
+
+Deploy LiveKit Server on any Linux VPS with a public IP. See the [LiveKit self-hosting docs](https://docs.livekit.io/home/self-hosting/local/). Same `.env` pattern as above once it's running.
 
 ---
 
