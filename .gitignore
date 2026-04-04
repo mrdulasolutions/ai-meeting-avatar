@@ -46,8 +46,10 @@ Thumbs.db
 .idea/
 *.swp
 
-# Claude Code internals
-.claude/
+# Claude Code — commit skills, ignore internals
+.claude/*
+!.claude/skills/
+.claude/settings.local.json
 
 # Compiler profiling artifacts
 *.profraw
