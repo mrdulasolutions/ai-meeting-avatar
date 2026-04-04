@@ -3,6 +3,7 @@ CLI entry point for ai-meeting-avatar.
 
 Commands
 ────────
+  ai-avatar onboard              Interactive setup wizard (start here)
   ai-avatar join <room>          Join a LiveKit room as the avatar agent
   ai-avatar test-pipeline        Record 5 s from mic and run STT → LLM → TTS locally
   ai-avatar check-deps           Verify all Python deps and binaries are present
@@ -38,7 +39,10 @@ load_dotenv()
 @click.option("--verbose", "-v", is_flag=True, help="Enable DEBUG logging")
 @click.pass_context
 def cli(ctx: click.Context, config: str, verbose: bool) -> None:
-    """AI Meeting Avatar — local voice + avatar agent for Google Meet / Zoom."""
+    """AI Meeting Avatar — local voice + avatar agent for Google Meet / Zoom.
+
+    New here? Run:  ai-avatar onboard
+    """
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -47,6 +51,17 @@ def cli(ctx: click.Context, config: str, verbose: bool) -> None:
     )
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config
+
+
+# ── onboard ────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+def onboard() -> None:
+    """Interactive setup wizard — run this first."""
+    from .onboarding import run_onboarding  # noqa: PLC0415
+
+    asyncio.run(run_onboarding())
 
 
 # ── join ───────────────────────────────────────────────────────────────────────

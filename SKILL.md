@@ -2,145 +2,153 @@
 
 ## Trigger phrases
 
-Use this skill when the user says any of:
+Activate this skill when the user says any of:
 - "join my meeting"
 - "attend this call"
 - "join the call"
 - "join [room name]"
-- "start avatar agent"
-- "join Google Meet / Zoom"
-- "run the meeting agent"
+- "start the avatar"
+- "set up the avatar"
+- "set up my meeting avatar"
+- "onboard"
+- "first time setup"
 
 ---
 
-## What this skill does
+## Decision tree
 
-Launches the `ai-meeting-avatar` agent into a LiveKit room so it can:
+```
+User wants to join a call
+        │
+        ├── Has setup been completed?
+        │   (voice sample exists at assets/voice_samples/speaker.wav)
+        │
+        ├── NO  → run onboarding wizard first  (Step A)
+        │
+        └── YES → join the room directly       (Step B)
+```
 
-1. **Listen** — transcribes speech via local Whisper STT
-2. **Respond** — generates replies via local Ollama LLM
-3. **Speak** — synthesises audio with the cloned voice via Coqui XTTS-v2
-4. *(Phase 2)* **Show avatar** — renders lip-synced video via SadTalker → OBS virtual camera
+Check with:
+```bash
+ls assets/voice_samples/speaker.wav 2>/dev/null && echo "READY" || echo "NEEDS_SETUP"
+```
 
 ---
 
-## Skill workflow
+## Step A — First-time setup (onboarding wizard)
 
-### Step 1 — Identify the meeting details
+Tell the user:
+> "Let's get you set up. This takes about 5 minutes and I'll walk you through every step — just follow the prompts."
 
-Ask the user for:
-- **Room name** (LiveKit room, or meeting URL if using a bridge)
-- **LiveKit server URL** (default: `ws://localhost:7880`)
-- Whether they want to override the LLM model or voice sample
-
-### Step 2 — Pre-flight checks
-
+Then run:
 ```bash
-# From the ai-meeting-avatar project directory:
-ai-avatar check-deps
+cd ~/Desktop/ai-meeting-avatar
+source .venv/bin/activate 2>/dev/null || python3.11 -m venv .venv && source .venv/bin/activate && pip install -e . -q
+ai-avatar onboard
 ```
 
-If any dependency is missing, guide the user through:
+The wizard handles everything interactively:
+
+| Step | What happens |
+|------|-------------|
+| 1 — Dependencies | Checks and auto-installs missing packages |
+| 2 — Ollama LLM | Starts Ollama if not running, pulls the model |
+| 3 — Voice recording | Records 15 s from mic with a countdown bar |
+| 4 — LiveKit | Starts the local media server via Docker |
+| 5 — Pipeline test | Speaks a test sentence in the cloned voice |
+| 6 — Summary | Shows status and exact next command |
+
+**If a step fails**, read the error shown in the terminal and handle it:
+
+- `sounddevice` error → `pip install sounddevice` then re-run
+- Ollama not found → guide user to [ollama.com](https://ollama.com), then `ollama serve`
+- Docker not found → skip LiveKit step, have them install Docker first
+- Voice sample too quiet → re-run `ai-avatar onboard` and re-record closer to mic
+
+---
+
+## Step B — Join a call
+
+### Confirm LiveKit is running first:
 ```bash
-pip install -e .
-./scripts/setup_models.sh
+curl -s http://localhost:7880 >/dev/null && echo "LiveKit OK" || echo "Start LiveKit first"
 ```
 
-### Step 3 — Ensure voice sample exists
-
-```bash
-ls assets/voice_samples/speaker.wav
-```
-
-If missing, prompt the user to add a 6-30 second WAV clip:
-```bash
-cp ~/path/to/your_voice.wav assets/voice_samples/speaker.wav
-```
-
-### Step 4 — Start LiveKit (if running locally)
-
+If not running:
 ```bash
 docker run --rm -p 7880:7880 -p 7881:7881 \
   -e LIVEKIT_KEYS="devkey: secret" \
-  livekit/livekit-server --dev
+  livekit/livekit-server --dev &
+sleep 3
 ```
 
-### Step 5 — Join the room
-
+### Join the room:
 ```bash
+cd ~/Desktop/ai-meeting-avatar && source .venv/bin/activate
 ai-avatar join <ROOM_NAME>
-# or with explicit flags:
-ai-avatar join my-meeting \
-  --url ws://localhost:7880 \
-  --api-key devkey \
-  --api-secret secret
 ```
 
-### Step 6 — Verify it works
+Ask the user for the room name if they haven't given it.
 
-In a second terminal, run the pipeline smoke test:
+---
+
+## Step C — Connect to Google Meet or Zoom
+
+After the agent is running in its room, the user needs to route audio:
+
+**macOS (BlackHole virtual audio — free):**
 ```bash
-ai-avatar test-pipeline --text "Hello, can you hear me?"
+brew install blackhole-2ch
 ```
+Then:
+1. Open **Audio MIDI Setup** → create a **Multi-Output Device** (BlackHole + speakers)
+2. In **System Settings → Sound → Output** → select the Multi-Output Device
+3. Open Google Meet → Settings → Microphone → **BlackHole 2ch**
+4. The avatar's voice flows: `LiveKit room → BlackHole → Google Meet mic`
+
+Tell the user:
+> "Open Google Meet, go to Settings → Microphone, and select BlackHole 2ch. The avatar will speak through that mic. Done!"
 
 ---
 
-## Common configuration changes
+## Troubleshooting quick-reference
 
-| Goal | Edit in `config.yaml` |
-|------|-----------------------|
-| Change LLM model | `llm.model: mistral` |
-| Use GPU for TTS | `tts.gpu: true` |
-| Change Whisper model size | `stt.model_size: small` |
-| Enable avatar video | `avatar.enabled: true` |
-| Point to different voice sample | `tts.speaker_wav: ./path/to/voice.wav` |
-| Adjust response verbosity | Edit `agent.system_prompt` |
+Ask the user which symptom they're seeing, then apply the fix:
 
----
-
-## Architecture reference
-
-```
-Microphone (remote participant)
-        │
-        ▼
-  EnergyVAD  ──── silence threshold ────►  discard
-        │
-        │ speech segment (float32 array)
-        ▼
-  WhisperSTT (faster-whisper, local)
-        │ transcript text
-        ▼
-  OllamaLLM  (local Ollama server)
-        │ reply text
-        ▼
-  CoquiXTTS  (XTTS-v2, local, voice-cloned)
-        │ audio chunks
-        ▼
-  LiveKit AudioSource  ──►  room participants hear the avatar
-        │ (Phase 2 only)
-        ▼
-  SadTalker / LivePortrait  ──►  MP4 video
-        │
-        ▼
-  OBS WebSocket  ──►  Virtual Camera  ──►  Zoom/Google Meet webcam
-```
+| Symptom | Fix |
+|---------|-----|
+| "No speech detected" | Speak louder / closer to mic; lower `stt.vad_energy_threshold` in config.yaml |
+| Response is very slow | Change `stt.model_size: tiny` and `llm.model: llama3.2:1b` in config.yaml |
+| Voice doesn't sound like me | Re-record in a quieter room: `ai-avatar onboard` → skip to Step 3 |
+| "Ollama connection refused" | Run `ollama serve` in a separate terminal |
+| "LiveKit connection refused" | Start LiveKit (see Step B above) |
+| TTS download stuck | XTTS-v2 is ~1.8 GB — wait; check `~/.local/share/tts` |
+| Can't hear avatar in Meet | BlackHole not set as mic in Meet settings |
 
 ---
 
-## Troubleshooting
+## Configuration changes (edit config.yaml)
 
-**"Speaker WAV not found"**
-→ `cp your_voice.wav assets/voice_samples/speaker.wav`
+Offer these when the user wants to tweak behaviour:
 
-**Ollama connection refused**
-→ Ensure Ollama is running: `ollama serve`
+```yaml
+# Smarter/slower responses
+llm:
+  model: mistral         # or llama3.1, phi3, etc.
 
-**LiveKit connection refused**
-→ Start the LiveKit dev server (Step 4 above)
+# Faster STT (less accurate)
+stt:
+  model_size: tiny
 
-**Transcription is empty / very slow**
-→ Use a smaller Whisper model: `stt.model_size: tiny` in `config.yaml`
+# Use Apple Silicon GPU for TTS (faster)
+tts:
+  gpu: true              # works on CUDA too
 
-**TTS model download hangs**
-→ XTTS-v2 is ~1.8 GB. Let it complete or check `~/.local/share/tts`
+# Make the avatar more talkative / brief
+agent:
+  system_prompt: |
+    You are attending this meeting on behalf of [Name].
+    Keep answers under 2 sentences unless asked for detail.
+```
+
+After any config change: restart with `ai-avatar join <room>`.
