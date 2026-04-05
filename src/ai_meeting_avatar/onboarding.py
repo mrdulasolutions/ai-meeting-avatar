@@ -91,7 +91,7 @@ def step_check_python() -> None:
     _ok(f"Python {v.major}.{v.minor}.{v.micro} — compatible")
 
 
-def step_welcome() -> None:
+def step_welcome(auto_confirm: bool = False) -> None:
     console.print(
         Panel.fit(
             "[bold white]AI Meeting Avatar[/bold white]\n"
@@ -105,12 +105,19 @@ def step_welcome() -> None:
         )
     )
     console.print()
-    Confirm.ask("  Ready to begin?", default=True)
+    if not auto_confirm:
+        Confirm.ask("  Ready to begin?", default=True)
 
 
-def step_choose_brain() -> str:
+def step_choose_brain(preset_brain: str | None = None) -> str:
     """Ask the user which LLM backend to use. Returns 'gemma' or 'claude'."""
     _step(2, 8, "Choose AI brain")
+
+    if preset_brain:
+        backend = preset_brain.lower()
+        _ok(f"Pre-selected brain: {backend}")
+        _set_config_backend(backend)
+        return backend
 
     console.print(
         Panel(
@@ -222,7 +229,18 @@ def step_check_deps() -> bool:
     return True
 
 
-def step_gemma_download() -> bool:
+def _hf_cli() -> list[str]:
+    """Return the command to invoke huggingface-cli, venv-aware."""
+    hf_bin = Path(sys.executable).parent / "huggingface-cli"
+    if hf_bin.exists():
+        return [str(hf_bin)]
+    if shutil.which("huggingface-cli"):
+        return ["huggingface-cli"]
+    # Fall back to python -m
+    return [sys.executable, "-m", "huggingface_hub"]
+
+
+def step_gemma_download(auto_confirm: bool = False) -> bool:
     """Download Gemma 4 E2B weights from Hugging Face."""
     _step(3, 8, "LLM — Gemma 4 E2B (Google AI Edge)")
 
@@ -252,14 +270,15 @@ def step_gemma_download() -> bool:
     )
     console.print()
 
-    if not Confirm.ask("  Download Gemma 4 E2B now?", default=True):
+    if not auto_confirm and not Confirm.ask("  Download Gemma 4 E2B now?", default=True):
         _warn("Skipped. Run setup_models.sh later to download.")
         return False
 
     # HF login check
+    hf_cmd = _hf_cli()
     try:
         result = subprocess.run(
-            ["huggingface-cli", "whoami"],
+            [*hf_cmd, "whoami"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
@@ -267,11 +286,15 @@ def step_gemma_download() -> bool:
         else:
             raise subprocess.CalledProcessError(1, "whoami")
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        if auto_confirm:
+            _warn("Not logged in to Hugging Face and running non-interactively.")
+            _info("Log in first:  huggingface-cli login --token YOUR_TOKEN")
+            return False
         _info("You need a Hugging Face token. Get one at: huggingface.co/settings/tokens")
         console.print()
         token = Prompt.ask("  Paste your HF token (hidden)", password=True)
         login = subprocess.run(
-            ["huggingface-cli", "login", "--token", token],
+            [*hf_cmd, "login", "--token", token],
             capture_output=True, text=True,
         )
         if login.returncode != 0:
@@ -289,7 +312,7 @@ def step_gemma_download() -> bool:
                   TimeElapsedColumn(), console=console, transient=False) as p:
         p.add_task("Downloading Gemma 4 E2B …", total=None)
         dl = subprocess.run(
-            ["huggingface-cli", "download", repo,
+            [*hf_cmd, "download", repo,
              "--local-dir", str(model_path.parent),
              "--local-dir-use-symlinks", "False",
              "--include", "*.litertlm", "*.json", "*.md"],
@@ -324,7 +347,7 @@ def step_gemma_download() -> bool:
     return True
 
 
-def step_claude_setup() -> bool:
+def step_claude_setup(auto_confirm: bool = False) -> bool:
     """Guide the user through setting up the Claude backend."""
     _step(3, 8, "LLM — Claude (Anthropic API)")
 
@@ -332,8 +355,21 @@ def step_claude_setup() -> bool:
 
     # Check for existing key
     existing_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not existing_key:
+        # Also check .env file directly
+        env_path = Path(".env")
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("ANTHROPIC_API_KEY=") and len(line.split("=", 1)[1].strip()) > 0:
+                    existing_key = line.split("=", 1)[1].strip()
+                    break
+
     if existing_key:
         _ok(f"ANTHROPIC_API_KEY already set ({existing_key[:8]}…)")
+    elif auto_confirm:
+        _fail("ANTHROPIC_API_KEY not found and running non-interactively.")
+        _info("Set it first:  echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env")
+        return False
     else:
         console.print(
             Panel(
@@ -472,9 +508,14 @@ def step_tts_setup() -> bool:
     return True
 
 
-def step_avatar_setup() -> bool:
+def step_avatar_setup(auto_confirm: bool = False) -> bool:
     """Optional Phase 2 avatar setup: photo, deps, model download."""
     _step(5, 8, "Talking avatar (Phase 2 — optional)")
+
+    # In non-interactive mode, skip avatar setup (it's optional)
+    if auto_confirm:
+        _info("Skipped avatar setup (non-interactive). Run later:  ai-avatar avatar-setup")
+        return True
 
     console.print(
         Panel(
@@ -534,7 +575,7 @@ def step_avatar_setup() -> bool:
 
     if avatar_deps_missing:
         console.print()
-        if Confirm.ask("  Install avatar dependencies? (may take a few minutes)", default=True):
+        if auto_confirm or Confirm.ask("  Install avatar dependencies? (may take a few minutes)", default=True):
             _info("Installing avatar deps …")
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "-e", ".[avatar]", "-q"],
@@ -666,7 +707,7 @@ def _set_config_avatar_enabled(enabled: bool) -> None:
     config_path.write_text(new_text)
 
 
-def step_livekit() -> bool:
+def step_livekit(auto_confirm: bool = False) -> bool:
     """Check if LiveKit is running; offer to start it via Docker."""
     _step(6, 8, "LiveKit server")
 
@@ -690,10 +731,11 @@ def step_livekit() -> bool:
             '  [bold]docker run --rm -p 7880:7880 -p 7881:7881 -e LIVEKIT_KEYS="devkey: secret" livekit/livekit-server --dev[/bold]'
         )
         console.print()
-        Confirm.ask("  Press Enter once LiveKit is running", default=True)
+        if not auto_confirm:
+            Confirm.ask("  Press Enter once LiveKit is running", default=True)
         return True
 
-    if Confirm.ask("  Start LiveKit dev server via Docker now?", default=True):
+    if auto_confirm or Confirm.ask("  Start LiveKit dev server via Docker now?", default=True):
         _info("Starting LiveKit …")
         subprocess.Popen(
             ["docker", "run", "--rm",
@@ -714,7 +756,7 @@ def step_livekit() -> bool:
     return True
 
 
-def step_pipeline_test() -> bool:
+def step_pipeline_test(auto_confirm: bool = False) -> bool:
     """Run STT → LLM → TTS end-to-end. Return True if it passes."""
     _step(7, 8, "End-to-end test")
 
@@ -722,7 +764,7 @@ def step_pipeline_test() -> bool:
     console.print("  [dim]May take 1-3 minutes while models initialise.[/dim]")
     console.print()
 
-    if not Confirm.ask("  Run the test now? (recommended)", default=True):
+    if not auto_confirm and not Confirm.ask("  Run the test now? (recommended)", default=True):
         _info("Skipped. Run later:  ai-avatar test-pipeline --text 'hello'")
         return True
 
@@ -805,32 +847,76 @@ def step_summary(
 # ── Entry ──────────────────────────────────────────────────────────────────────
 
 
-async def run_onboarding() -> None:
-    """Run the full interactive onboarding wizard."""
-    step_welcome()
+async def run_onboarding(
+    preset_brain: str | None = None,
+    preset_voice: str | None = None,
+    skip_test: bool = False,
+    skip_avatar: bool = False,
+    auto_confirm: bool = False,
+) -> None:
+    """Run the onboarding wizard.
+
+    Args:
+        preset_brain: Pre-select 'gemma' or 'claude' (skip interactive prompt).
+        preset_voice: Pre-select TTS voice ID (skip interactive prompt).
+        skip_test: Skip the end-to-end pipeline test.
+        skip_avatar: Skip avatar setup (Phase 2).
+        auto_confirm: Auto-confirm all prompts (non-interactive mode).
+    """
+    step_welcome(auto_confirm=auto_confirm)
 
     # Step 0 — Python version (abort early if incompatible)
     step_check_python()
 
-    # Step 1 — deps (renumbered; step_check_deps still prints its own header)
+    # Step 1 — deps
     deps_ok = step_check_deps()
     if not deps_ok:
         _fail("Dependency check failed. Fix the issues above then re-run:  ai-avatar onboard")
         sys.exit(1)
 
     # Step 2 — choose brain
-    backend = step_choose_brain()
+    backend = step_choose_brain(preset_brain=preset_brain)
 
     # Step 3 — set up chosen LLM
     if backend == "claude":
-        llm_ok = step_claude_setup()
+        llm_ok = step_claude_setup(auto_confirm=auto_confirm)
     else:
-        llm_ok = step_gemma_download()
+        llm_ok = step_gemma_download(auto_confirm=auto_confirm)
+
+    # Apply preset voice if provided
+    if preset_voice:
+        _info(f"Pre-selected voice: {preset_voice}")
+        import re  # noqa: PLC0415
+        config_path = Path("config.yaml")
+        if config_path.exists():
+            text = config_path.read_text()
+            new_text = re.sub(
+                r"^(\s*voice:\s*).*$",
+                rf'\1"{preset_voice}"',
+                text,
+                flags=re.MULTILINE,
+                count=1,
+            )
+            config_path.write_text(new_text)
+            _ok(f"Voice set to {preset_voice}")
 
     tts_ok = step_tts_setup()
-    avatar_ok = step_avatar_setup()
-    livekit_ok = step_livekit()
-    test_ok = step_pipeline_test()
+
+    if skip_avatar:
+        _step(5, 8, "Talking avatar (Phase 2 — optional)")
+        _info("Skipped (--skip-avatar). Run later:  ai-avatar avatar-setup")
+        avatar_ok = True
+    else:
+        avatar_ok = step_avatar_setup(auto_confirm=auto_confirm)
+
+    livekit_ok = step_livekit(auto_confirm=auto_confirm)
+
+    if skip_test:
+        _step(7, 8, "End-to-end test")
+        _info("Skipped (--skip-test). Run later:  ai-avatar test-pipeline --text 'hello'")
+        test_ok = True
+    else:
+        test_ok = step_pipeline_test(auto_confirm=auto_confirm)
 
     step_summary(
         deps_ok=deps_ok,

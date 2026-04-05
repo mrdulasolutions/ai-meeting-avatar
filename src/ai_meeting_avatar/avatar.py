@@ -260,13 +260,17 @@ class SadTalkerRenderer(AvatarRenderer):
         logger.info("Rendering avatar (SadTalker) — this may take 30-120 seconds …")
         t0 = time.monotonic()
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(self._sadtalker_path),
-            timeout=300,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(self._sadtalker_path),
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("SadTalker render timed out after 300s.")
+            return ""
 
         elapsed = time.monotonic() - t0
         logger.info("SadTalker render took %.1f seconds.", elapsed)
@@ -358,13 +362,17 @@ class LivePortraitRenderer(AvatarRenderer):
         logger.info("Rendering avatar (LivePortrait) …")
         t0 = time.monotonic()
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(self._liveportrait_path),
-            timeout=300,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(self._liveportrait_path),
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("LivePortrait render timed out after 300s.")
+            return ""
 
         elapsed = time.monotonic() - t0
         logger.info("LivePortrait render took %.1f seconds.", elapsed)

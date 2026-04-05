@@ -80,7 +80,7 @@ If no compatible Python is found: `brew install python@3.13`
 ## First-Run Onboarding
 
 Tell the user:
-> "Welcome! Let me set up your AI meeting avatar. Two quick questions, then I'll run the setup wizard."
+> "Welcome! Let me set up your AI meeting avatar. Two quick questions, then I'll handle the rest."
 
 ### Question 1 — Brain (LLM backend)
 
@@ -94,11 +94,11 @@ Tell the user:
 >    - Better reasoning and conversation. ~$0.01/meeting.
 >    - No large download — works immediately.
 
-Wait for choice. Apply:
+Wait for choice. Save the brain value for the onboard command below.
 
+If user picks Claude, also ask for their Anthropic API key and save it:
 ```bash
-source .venv/bin/activate
-ai-avatar brain --set gemma   # or: ai-avatar brain --set claude
+echo "ANTHROPIC_API_KEY=THE_KEY" >> .env
 ```
 
 ### Question 2 — Voice
@@ -107,20 +107,35 @@ Read `${CLAUDE_SKILL_DIR}/references/voices.md` and show the voice table.
 
 > "Pick a voice by number, or press Enter for the default (af_heart)."
 
-Apply with the helper script:
+Save the voice ID for the onboard command below.
 
-```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/set-voice.sh" "VOICE_ID"
-```
+### Step 1 — Check dependencies first
 
-### Run the wizard
+Before running the full wizard, verify deps are installable:
 
 ```bash
 source .venv/bin/activate
-ai-avatar onboard
+ai-avatar check-deps
 ```
 
-The wizard is interactive — it handles dependencies, model downloads, LiveKit, and a pipeline test. Let it run to completion without interruption.
+If this fails, read `${CLAUDE_SKILL_DIR}/references/troubleshooting.md` for the fix before continuing.
+
+### Step 2 — Run the wizard (non-interactive)
+
+**IMPORTANT**: Always use `--yes` flag to run non-interactively. The interactive wizard
+cannot work in environments without a TTY (Cowork, osascript, scripts).
+
+```bash
+source .venv/bin/activate
+ai-avatar onboard --brain BRAIN --voice VOICE_ID --skip-avatar --yes
+```
+
+Replace `BRAIN` with `gemma` or `claude`, and `VOICE_ID` with the chosen voice.
+
+The `--yes` flag auto-confirms all prompts. `--skip-avatar` skips the optional
+lip-sync avatar setup (can be done later with `ai-avatar avatar-setup`).
+
+Add `--skip-test` if you want to skip the end-to-end pipeline test.
 
 ### After wizard completes
 
@@ -134,7 +149,7 @@ Tell user: "You're all set! Say `/ai-meeting-avatar my-room` to join a call."
 
 ### If wizard fails
 
-Read `${CLAUDE_SKILL_DIR}/references/troubleshooting.md` for the fix, apply it, then re-run `ai-avatar onboard`.
+Read `${CLAUDE_SKILL_DIR}/references/troubleshooting.md` for the fix, apply it, then re-run the onboard command above.
 
 ---
 

@@ -58,11 +58,51 @@ def cli(ctx: click.Context, config: str, verbose: bool) -> None:
 
 
 @cli.command()
-def onboard() -> None:
-    """Interactive setup wizard — run this first."""
+@click.option(
+    "--brain",
+    type=click.Choice(["gemma", "claude"], case_sensitive=False),
+    default=None,
+    help="Pre-select LLM backend (skip interactive prompt)",
+)
+@click.option(
+    "--voice",
+    default=None,
+    help="Pre-select TTS voice ID (skip interactive prompt)",
+)
+@click.option(
+    "--skip-test",
+    is_flag=True,
+    default=False,
+    help="Skip the end-to-end pipeline test",
+)
+@click.option(
+    "--skip-avatar",
+    is_flag=True,
+    default=False,
+    help="Skip avatar setup (Phase 2)",
+)
+@click.option(
+    "--yes", "-y",
+    is_flag=True,
+    default=False,
+    help="Auto-confirm all prompts (non-interactive mode)",
+)
+def onboard(brain: str | None, voice: str | None, skip_test: bool, skip_avatar: bool, yes: bool) -> None:
+    """Interactive setup wizard — run this first.
+
+    \b
+    For non-interactive use (e.g. from Cowork or scripts):
+        ai-avatar onboard --brain gemma --voice af_heart --yes
+    """
     from .onboarding import run_onboarding  # noqa: PLC0415
 
-    asyncio.run(run_onboarding())
+    asyncio.run(run_onboarding(
+        preset_brain=brain,
+        preset_voice=voice,
+        skip_test=skip_test,
+        skip_avatar=skip_avatar,
+        auto_confirm=yes,
+    ))
 
 
 # ── join ───────────────────────────────────────────────────────────────────────

@@ -33,6 +33,7 @@ from livekit import rtc
 
 from .avatar import (
     AvatarRenderer,
+    NullAvatarRenderer,
     OBSVirtualCamera,
     VirtualCamera,
     create_renderer,
@@ -116,6 +117,25 @@ class MeetingAvatarAgent:
 
         # Serialise pipeline calls so LLM context stays coherent
         self._pipeline_lock = asyncio.Lock()
+        # Track background tasks to prevent orphaned failures
+        self._tasks: set[asyncio.Task] = set()
+
+    # ── Task management ────────────────────────────────────────────────────────
+
+    def _spawn_task(self, coro) -> asyncio.Task:
+        """Create a tracked task. Logs exceptions instead of silently dropping them."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return task
+
+    def _task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Background task failed: %s", exc, exc_info=exc)
 
     # ── Model loading ──────────────────────────────────────────────────────────
 
@@ -125,7 +145,17 @@ class MeetingAvatarAgent:
         self._stt.load()
         self._tts.load()
         self._llm.load()
-        await self._avatar.load()
+
+        # Avatar load — if it fails, fall back to audio-only instead of crashing
+        try:
+            await self._avatar.load()
+        except Exception:
+            logger.exception(
+                "Avatar model failed to load — falling back to audio-only mode"
+            )
+            self._avatar = NullAvatarRenderer()
+            self._vcam = None
+            self._cfg.avatar.enabled = False
 
         # Start virtual camera (pyvirtualcam) if avatar is enabled
         if self._vcam is not None:
@@ -138,13 +168,17 @@ class MeetingAvatarAgent:
                 self._vcam = None
 
         if self._cfg.obs.enabled:
-            self._obs = OBSVirtualCamera(
-                host=self._cfg.obs.host,
-                port=self._cfg.obs.port,
-                password=self._cfg.obs.password,
-                source_name=self._cfg.obs.source_name,
-            )
-            await self._obs.connect()
+            try:
+                self._obs = OBSVirtualCamera(
+                    host=self._cfg.obs.host,
+                    port=self._cfg.obs.port,
+                    password=self._cfg.obs.password,
+                    source_name=self._cfg.obs.source_name,
+                )
+                await self._obs.connect()
+            except Exception:
+                logger.exception("OBS connection failed — continuing without OBS")
+                self._obs = None
 
         logger.info("All models loaded — agent ready.")
 
@@ -162,7 +196,7 @@ class MeetingAvatarAgent:
         for participant in room.remote_participants.values():
             for pub in participant.track_publications.values():
                 if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
-                    asyncio.ensure_future(
+                    self._spawn_task(
                         self._handle_audio_track(pub.track)  # type: ignore[arg-type]
                     )
 
@@ -174,7 +208,7 @@ class MeetingAvatarAgent:
             participant: rtc.RemoteParticipant,
         ) -> None:
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                asyncio.ensure_future(self._handle_audio_track(track))  # type: ignore[arg-type]
+                self._spawn_task(self._handle_audio_track(track))  # type: ignore[arg-type]
 
         logger.info("Agent running in room '%s'. Listening …", room.name)
 
@@ -217,7 +251,7 @@ class MeetingAvatarAgent:
 
                 segment = vad.push_frame(pcm)
                 if segment is not None and segment.size > 0:
-                    asyncio.ensure_future(
+                    self._spawn_task(
                         self._run_pipeline(segment, frame.sample_rate)
                     )
         except asyncio.CancelledError:
@@ -272,8 +306,8 @@ class MeetingAvatarAgent:
 
     async def _speak(self, text: str) -> None:
         """Synthesise *text* and publish audio to the LiveKit room."""
-        # Phase 2: also render avatar video and push to OBS
-        if self._cfg.avatar.enabled:
+        # Phase 2: render avatar video only if avatar loaded AND vcam/OBS available
+        if self._cfg.avatar.enabled and (self._vcam is not None or self._obs is not None):
             await self._speak_with_avatar(text)
         else:
             await self._speak_audio_only(text)
@@ -342,7 +376,11 @@ class MeetingAvatarAgent:
 
     async def _render_and_stream_video(self, audio_path: str, output_dir: str) -> None:
         """Render avatar video and stream it to virtual camera + OBS."""
-        rendered = await self._avatar.render(audio_path, output_dir)
+        try:
+            rendered = await self._avatar.render(audio_path, output_dir)
+        except Exception:
+            logger.exception("Avatar render failed")
+            return
         if not rendered:
             return
 
