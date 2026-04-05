@@ -7,15 +7,16 @@ Run: pytest tests/
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 
-from ai_meeting_avatar.config import AppConfig, LLMConfig, STTConfig, TTSConfig
+from ai_meeting_avatar.config import AppConfig
+from ai_meeting_avatar.diagnostics import gather_state
 from ai_meeting_avatar.llm import ChatHistory, GemmaLLM
-from ai_meeting_avatar.stt import EnergyVAD, TranscriptionResult, WhisperSTT
+from ai_meeting_avatar.orchestrator import create_room_token
+from ai_meeting_avatar.stt import EnergyVAD, WhisperSTT
 from ai_meeting_avatar.tts import CoquiXTTS
 
 
@@ -268,3 +269,38 @@ stt:
 
         cfg = load_config("/nonexistent/config.yaml")
         assert cfg.llm.backend == "gemma"
+
+
+class TestDiagnostics:
+    def test_gather_state_reads_config(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            """
+livekit:
+  url: "ws://localhost:7880"
+  api_key: "devkey"
+  api_secret: "secret"
+  room: "demo"
+llm:
+  backend: "claude"
+tts:
+  voice: "af_heart"
+avatar:
+  enabled: false
+"""
+        )
+
+        monkeypatch.setattr("ai_meeting_avatar.diagnostics.load_prefs", lambda: {"setup_complete": False, "last_room": "demo"})
+        state = gather_state(cfg_file)
+        assert state.backend == "claude"
+        assert state.voice == "af_heart"
+        assert state.room == "demo"
+        assert not state.ready_to_join
+
+
+class TestTokens:
+    def test_create_room_token(self):
+        cfg = AppConfig()
+        token = create_room_token(cfg, "demo", "avatar", "AI Meeting Avatar")
+        assert isinstance(token, str)
+        assert token.count(".") == 2

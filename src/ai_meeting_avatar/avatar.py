@@ -23,7 +23,6 @@ import asyncio
 import glob
 import logging
 import subprocess
-import tempfile
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -423,7 +422,7 @@ class VirtualCamera:
     async def start(self) -> None:
         """Open the virtual camera device."""
         try:
-            import pyvirtualcam  # noqa: PLC0415
+            __import__("pyvirtualcam")
         except ImportError:
             raise ImportError(
                 "pyvirtualcam not installed. Run: pip install -e '.[avatar]'"
@@ -643,7 +642,7 @@ def create_virtual_camera(config) -> Optional[VirtualCamera]:
     if not config.enabled:
         return None
 
-    if config.camera_output == "none":
+    if config.camera_output in {"none", "obs"}:
         return None
 
     if config.camera_output in ("auto", "pyvirtualcam"):
