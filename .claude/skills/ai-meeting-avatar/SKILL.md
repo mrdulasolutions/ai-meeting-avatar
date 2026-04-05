@@ -28,9 +28,15 @@ Use the state output above as the source of truth.
 
 ## Core behavior
 
-- If `PROJECT=missing`: tell the user the project is not available and stop.
-- If `VENV=missing`: run the venv setup block below, then re-check state.
-- If `SETUP_COMPLETE=False` or `READY_TO_JOIN=False`: run **Setup**.
+| State | Action |
+|-------|--------|
+| `PROJECT=missing` | Tell the user the project is not available and stop. |
+| `PYTHON=missing` | Tell the user Python 3.11–3.13 is required and suggest `brew install python@3.13`. |
+| `PYTHON=incompatible (...)` | Tell the user they need Python 3.11–3.13 and should recreate the venv with a compatible version. |
+| `VENV=missing` | Run **Venv setup** below, then re-check state. |
+| `SETUP_COMPLETE=False` or `READY_TO_JOIN=False` | Run **Setup**. |
+| Otherwise | Handle the requested command. |
+
 - If the user asks for `status`: run **Status**.
 - If the user asks for `doctor`: run **Doctor**.
 - If the user asks for `voice`: run **Voice**.
@@ -40,8 +46,13 @@ Use the state output above as the source of truth.
 
 ## Venv setup
 
+Use the `PYTHON` value from the state check to pick a compatible binary.
+
 ```bash
-python3.11 -m venv .venv
+for py in python3.13 python3.12 python3.11; do
+  if command -v "$py" >/dev/null 2>&1; then PYTHON="$py"; break; fi
+done
+$PYTHON -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip -q
 pip install -e . -q
@@ -52,7 +63,14 @@ pip install -e . -q
 Tell the user:
 > "I’m going to run the avatar-first setup flow so the skill has one reliable room-join path."
 
-Then run:
+Run onboarding with non-interactive flags whenever you already know the user’s brain or voice choice:
+
+```bash
+source .venv/bin/activate
+ai-avatar onboard --brain BRAIN --voice VOICE_ID --yes
+```
+
+If you need interactive setup instead:
 
 ```bash
 source .venv/bin/activate
@@ -76,9 +94,7 @@ Use `${CLAUDE_SKILL_DIR}/references/troubleshooting.md` only when a concrete set
 
 ## Join
 
-Before joining, ensure Docker / LiveKit is available when the configured URL is local.
-
-If the state says `LIVEKIT_RUNNING=False` and the configured URL is `ws://localhost:7880`, start local LiveKit:
+If the state says `LIVEKIT_RUNNING=False` and the configured URL is local, start local LiveKit:
 
 ```bash
 docker run --rm -d --name livekit-dev \

@@ -15,7 +15,6 @@ from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 from rich.table import Table
 
-from .config import load_config
 from .diagnostics import gather_state
 from .prefs import set as set_pref
 
@@ -43,14 +42,17 @@ def _set_config_value(config_path: str, section: str, key: str, value: str) -> N
     cfg_file.write_text(text.replace(block, updated, 1))
 
 
-def _venv_bin(name: str) -> str:
-    venv = Path(sys.prefix) / "bin" / name
-    return str(venv) if venv.exists() else name
-
-
 def _step(title: str) -> None:
     console.print()
     console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
+
+
+def _check_python_version() -> None:
+    v = sys.version_info
+    if not (3, 11) <= (v.major, v.minor) <= (3, 13):
+        raise SystemExit(
+            f"Python {v.major}.{v.minor} is not supported. Use Python 3.11–3.13."
+        )
 
 
 def _check_python_packages(packages: list[tuple[str, str]]) -> list[str]:
@@ -75,24 +77,29 @@ def _install_package(extra: str = "") -> bool:
     return result.returncode == 0
 
 
-def _choose_brain(config_path: str) -> str:
+def _choose_brain(config_path: str, preset_brain: str | None = None, auto_confirm: bool = False) -> str:
     _step("Step 1/5 - Choose Brain")
-    console.print(
-        Panel(
-            "[bold]1) Gemma[/bold] - local, private, larger setup\n"
-            "[bold]2) Claude[/bold] - cloud, faster to get working\n\n"
-            "You can switch later with [cyan]ai-avatar brain --set ...[/cyan].",
-            title="AI Brain",
-            border_style="yellow",
+    if preset_brain:
+        backend = preset_brain.lower()
+    elif auto_confirm:
+        backend = "claude"
+    else:
+        console.print(
+            Panel(
+                "[bold]1) Gemma[/bold] - local, private, larger setup\n"
+                "[bold]2) Claude[/bold] - cloud, faster to get working",
+                title="AI Brain",
+                border_style="yellow",
+            )
         )
-    )
-    choice = Prompt.ask("Pick brain", choices=["1", "2"], default="2")
-    backend = "claude" if choice == "2" else "gemma"
+        choice = Prompt.ask("Pick brain", choices=["1", "2"], default="2")
+        backend = "claude" if choice == "2" else "gemma"
+
     _set_config_value(config_path, "llm", "backend", f'"{backend}"')
     return backend
 
 
-def _choose_voice(config_path: str) -> str:
+def _choose_voice(config_path: str, preset_voice: str | None = None, auto_confirm: bool = False) -> str:
     _step("Step 2/5 - Choose Voice")
     voices = [
         ("1", "af_heart", "warm female"),
@@ -103,16 +110,22 @@ def _choose_voice(config_path: str) -> str:
         ("6", "bf_emma", "British female"),
         ("7", "bm_george", "British male"),
     ]
-    table = Table(title="Voices")
-    table.add_column("#")
-    table.add_column("Voice")
-    table.add_column("Style")
-    for row in voices:
-        table.add_row(*row)
-    console.print(table)
 
-    selected = Prompt.ask("Pick voice", choices=[row[0] for row in voices], default="1")
-    voice = next(row[1] for row in voices if row[0] == selected)
+    if preset_voice:
+        voice = preset_voice
+    elif auto_confirm:
+        voice = "af_heart"
+    else:
+        table = Table(title="Voices")
+        table.add_column("#")
+        table.add_column("Voice")
+        table.add_column("Style")
+        for row in voices:
+            table.add_row(*row)
+        console.print(table)
+        selected = Prompt.ask("Pick voice", choices=[row[0] for row in voices], default="1")
+        voice = next(row[1] for row in voices if row[0] == selected)
+
     lang = "en-gb" if voice.startswith(("bf_", "bm_")) else "en-us"
     _set_config_value(config_path, "tts", "voice", f'"{voice}"')
     _set_config_value(config_path, "tts", "lang", f'"{lang}"')
@@ -120,19 +133,22 @@ def _choose_voice(config_path: str) -> str:
     return voice
 
 
-def _setup_brain(config_path: str, backend: str) -> bool:
+def _setup_brain(config_path: str, backend: str, auto_confirm: bool = False) -> bool:
     _step("Step 3/5 - Configure Brain")
+    env_path = Path(config_path).resolve().parent / ".env"
 
     if backend == "claude":
         api_key = ""
-        env_path = Path(config_path).resolve().parent / ".env"
         if env_path.exists():
             for line in env_path.read_text().splitlines():
                 if line.startswith("ANTHROPIC_API_KEY="):
                     api_key = line.split("=", 1)[1].strip()
                     break
-        if not api_key:
+
+        if not api_key and not auto_confirm:
             api_key = Prompt.ask("Paste your Anthropic API key", password=True)
+
+        if api_key:
             lines = env_path.read_text().splitlines() if env_path.exists() else []
             lines = [line for line in lines if not line.startswith("ANTHROPIC_API_KEY=")]
             lines.append(f"ANTHROPIC_API_KEY={api_key}")
@@ -143,24 +159,30 @@ def _setup_brain(config_path: str, backend: str) -> bool:
             if not _install_package("[claude]"):
                 console.print("[red]Could not install Claude dependencies.[/red]")
                 return False
-        console.print("[green]Claude is configured.[/green]")
         return True
 
-    model_path = Path(load_config(config_path).llm.model_path)
-    if model_path.exists():
-        console.print(f"[green]Gemma model already present:[/green] {model_path}")
+    model_path = Path("models/gemma-4-e2b")
+    if any(model_path.glob("*.litertlm")):
+        console.print("[green]Gemma model already present.[/green]")
         return True
 
-    console.print("[cyan]Gemma is selected. Download the model with scripts/setup_models.sh if needed.[/cyan]")
+    console.print(
+        "[yellow]Gemma model not found.[/yellow] Run [cyan]./scripts/setup_models.sh[/cyan] after onboarding."
+    )
     return False
 
 
-def _setup_avatar(config_path: str, photo: str | None = None) -> bool:
+def _setup_avatar(config_path: str, photo: str | None = None, auto_confirm: bool = False) -> bool:
     _step("Step 4/5 - Avatar Setup")
     from .avatar import validate_photo  # noqa: PLC0415
 
-    cfg = load_config(config_path)
-    photo_path = photo or Prompt.ask("Path to avatar photo", default=cfg.avatar.photo_path)
+    if photo:
+        photo_path = photo
+    elif auto_confirm:
+        photo_path = "./assets/avatar.jpg"
+    else:
+        photo_path = Prompt.ask("Path to avatar photo", default="./assets/avatar.jpg")
+
     result = validate_photo(photo_path)
     if not result["valid"]:
         console.print(f"[red]Photo invalid:[/red] {result['error']}")
@@ -173,12 +195,14 @@ def _setup_avatar(config_path: str, photo: str | None = None) -> bool:
     missing = _check_python_packages(
         [("torch", "torch"), ("cv2", "opencv-python"), ("pyvirtualcam", "pyvirtualcam")]
     )
-    if missing and Confirm.ask("Install avatar dependencies now?", default=True):
-        if not _install_package("[avatar]"):
+    if missing:
+        should_install = True if auto_confirm else Confirm.ask(
+            "Install avatar dependencies now?", default=True
+        )
+        if should_install and not _install_package("[avatar]"):
             console.print("[red]Could not install avatar dependencies.[/red]")
             return False
 
-    console.print("[green]Avatar photo and settings saved.[/green]")
     return True
 
 
@@ -191,29 +215,35 @@ def _run_doctor_summary(config_path: str) -> bool:
     for check in state.checks:
         table.add_row(check.summary, "[green]OK[/green]" if check.ok else "[yellow]Needs attention[/yellow]")
     console.print(table)
-    if state.ready_to_join:
-        console.print("[bold green]Ready.[/bold green] Run [cyan]ai-avatar join <room>[/cyan].")
-    else:
-        console.print("[bold yellow]Almost there.[/bold yellow] Run [cyan]ai-avatar doctor[/cyan] for full details.")
     return state.ready_to_join
 
 
 async def run_avatar_setup_only(config_path: str, photo: str | None) -> None:
+    _check_python_version()
     _setup_avatar(config_path, photo)
     _run_doctor_summary(config_path)
 
 
-async def run_onboarding(config_path: str) -> None:
+async def run_onboarding(
+    config_path: str = "config.yaml",
+    *,
+    preset_brain: str | None = None,
+    preset_voice: str | None = None,
+    skip_test: bool = False,
+    skip_avatar: bool = False,
+    auto_confirm: bool = False,
+) -> None:
+    _check_python_version()
     console.print(
         Panel.fit(
             "[bold white]AI Meeting Avatar[/bold white]\n"
-            "Set up a synced meeting avatar that other agents can install and run.\n\n"
-            "This setup is opinionated: one config, one voice, one avatar path, one readiness report.",
+            "Set up a synced meeting avatar with one reliable room-join path.\n"
+            "[dim]Requires Python 3.11–3.13[/dim]",
             title="Welcome",
             border_style="cyan",
         )
     )
-    if not Confirm.ask("Start setup?", default=True):
+    if not auto_confirm and not Confirm.ask("Start setup?", default=True):
         return
 
     _step("Step 0/5 - Base Dependencies")
@@ -226,14 +256,20 @@ async def run_onboarding(config_path: str) -> None:
             ("livekit", "livekit"),
         ]
     )
-    if missing and Confirm.ask("Install missing base dependencies now?", default=True):
-        if not _install_package():
+    if missing:
+        should_install = True if auto_confirm else Confirm.ask(
+            "Install missing base dependencies now?", default=True
+        )
+        if should_install and not _install_package():
             console.print("[red]Base dependency install failed.[/red]")
             raise SystemExit(1)
 
-    backend = _choose_brain(config_path)
-    _choose_voice(config_path)
-    _setup_brain(config_path, backend)
-    _setup_avatar(config_path)
+    backend = _choose_brain(config_path, preset_brain, auto_confirm)
+    _choose_voice(config_path, preset_voice, auto_confirm)
+    _setup_brain(config_path, backend, auto_confirm)
+    if not skip_avatar:
+        _setup_avatar(config_path, None, auto_confirm)
     ready = _run_doctor_summary(config_path)
+    if not skip_test:
+        console.print("[dim]Run `ai-avatar test-pipeline --text \"hello\"` after setup to confirm the speech path.[/dim]")
     set_pref("setup_complete", ready)

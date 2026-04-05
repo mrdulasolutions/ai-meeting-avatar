@@ -84,12 +84,38 @@ def _set_config_value(config_path: str, section: str, key: str, value: str) -> N
 
 
 @cli.command()
+@click.option(
+    "--brain",
+    type=click.Choice(["gemma", "claude"], case_sensitive=False),
+    default=None,
+    help="Pre-select LLM backend",
+)
+@click.option("--voice", default=None, help="Pre-select TTS voice ID")
+@click.option("--skip-test", is_flag=True, default=False, help="Skip the pipeline test reminder")
+@click.option("--skip-avatar", is_flag=True, default=False, help="Skip avatar setup")
+@click.option("--yes", "-y", is_flag=True, default=False, help="Auto-confirm prompts")
 @click.pass_context
-def onboard(ctx: click.Context) -> None:
-    """Run the interactive avatar-first setup flow."""
+def onboard(
+    ctx: click.Context,
+    brain: str | None,
+    voice: str | None,
+    skip_test: bool,
+    skip_avatar: bool,
+    yes: bool,
+) -> None:
+    """Run the avatar-first setup flow."""
     from .onboarding import run_onboarding  # noqa: PLC0415
 
-    asyncio.run(run_onboarding(ctx.obj["config_path"]))
+    asyncio.run(
+        run_onboarding(
+            ctx.obj["config_path"],
+            preset_brain=brain,
+            preset_voice=voice,
+            skip_test=skip_test,
+            skip_avatar=skip_avatar,
+            auto_confirm=yes,
+        )
+    )
 
 
 @cli.command()

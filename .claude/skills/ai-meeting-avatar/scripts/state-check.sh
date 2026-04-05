@@ -13,6 +13,21 @@ fi
 cd "$PROJECT"
 echo "PROJECT=ok"
 
+COMPATIBLE_PYTHON=""
+for candidate in python3.13 python3.12 python3.11; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    COMPATIBLE_PYTHON="$candidate"
+    break
+  fi
+done
+
+if [ -n "$COMPATIBLE_PYTHON" ]; then
+  PY_FULL=$($COMPATIBLE_PYTHON --version 2>&1 | awk '{print $2}')
+  echo "PYTHON=$COMPATIBLE_PYTHON ($PY_FULL)"
+else
+  echo "PYTHON=missing"
+fi
+
 if [ -f ".venv/bin/activate" ]; then
   echo "VENV=ok"
 else

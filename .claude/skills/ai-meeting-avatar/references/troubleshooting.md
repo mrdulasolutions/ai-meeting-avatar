@@ -20,7 +20,8 @@
 | Config changes not taking effect | `/leave` then `/join` — config is loaded at startup |
 | Pipeline test times out | Models slow on first load — re-run: `ai-avatar test-pipeline --text 'hello'` |
 | Docker not found | Install Docker Desktop from docker.com |
-| Python 3.11 not found | `brew install python@3.11` |
+| Python 3.14+ "too new" / kokoro-onnx fails | kokoro-onnx only supports Python 3.11–3.13. Install: `brew install python@3.13` then `python3.13 -m venv .venv` |
+| Python 3.10 or older | Need Python 3.11+. Install: `brew install python@3.13` |
 
 ## Wizard step failures
 
