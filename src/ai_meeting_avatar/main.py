@@ -11,6 +11,7 @@ import os
 import shutil
 import signal
 from pathlib import Path
+from urllib.parse import quote
 
 import click
 from dotenv import load_dotenv
@@ -92,7 +93,6 @@ def _set_config_value(config_path: str, section: str, key: str, value: str) -> N
 )
 @click.option("--voice", default=None, help="Pre-select TTS voice ID")
 @click.option("--skip-test", is_flag=True, default=False, help="Skip the pipeline test reminder")
-@click.option("--skip-avatar", is_flag=True, default=False, help="Skip avatar setup")
 @click.option("--yes", "-y", is_flag=True, default=False, help="Auto-confirm prompts")
 @click.pass_context
 def onboard(
@@ -100,11 +100,15 @@ def onboard(
     brain: str | None,
     voice: str | None,
     skip_test: bool,
-    skip_avatar: bool,
     yes: bool,
 ) -> None:
     """Run the avatar-first setup flow."""
     from .onboarding import run_onboarding  # noqa: PLC0415
+
+    if yes and (brain is None or voice is None):
+        raise click.ClickException(
+            "`--yes` requires both `--brain` and `--voice` so setup does not silently choose defaults."
+        )
 
     asyncio.run(
         run_onboarding(
@@ -112,7 +116,6 @@ def onboard(
             preset_brain=brain,
             preset_voice=voice,
             skip_test=skip_test,
-            skip_avatar=skip_avatar,
             auto_confirm=yes,
         )
     )
@@ -511,6 +514,28 @@ def generate_token(ctx: click.Context, room: str, identity: str) -> None:
             kind="standard",
         )
     )
+
+
+@cli.command("generate-link")
+@click.option("--room", required=True, help="Room name")
+@click.option("--identity", default="browser-guest", show_default=True, help="Participant identity")
+@click.pass_context
+def generate_link(ctx: click.Context, room: str, identity: str) -> None:
+    """Generate a browser join link for LiveKit Meet."""
+    from .orchestrator import create_room_token  # noqa: PLC0415
+
+    cfg = load_config(ctx.obj["config_path"])
+    token = create_room_token(
+        cfg,
+        room,
+        identity,
+        cfg.agent.name,
+        hidden=False,
+        kind="standard",
+    )
+    livekit_url = quote(cfg.livekit.url, safe="")
+    encoded_token = quote(token, safe="")
+    click.echo(f"https://meet.livekit.io/custom/?liveKitUrl={livekit_url}&token={encoded_token}")
 
 
 def main() -> None:

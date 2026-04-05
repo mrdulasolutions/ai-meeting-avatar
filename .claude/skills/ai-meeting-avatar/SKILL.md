@@ -44,6 +44,14 @@ Use the state output above as the source of truth.
 - If the user asks for `leave`: run **Leave**.
 - Otherwise, treat the argument as a room name and run **Join**.
 
+## Safety rules
+
+- Never kill a process just because a port is in use.
+- Never say "let me kill it and retry."
+- If a port is occupied, first treat that as a possible already-running dependency and check whether it is usable.
+- If the port belongs to another process and cannot be reused, pick or suggest a different port instead of killing anything.
+- Only stop an existing avatar process when the user explicitly asked to `leave` or stop it.
+
 ## Venv setup
 
 Use the `PYTHON` value from the state check to pick a compatible binary.
@@ -63,19 +71,41 @@ pip install -e . -q
 Tell the user:
 > "I’m going to run the avatar-first setup flow so the skill has one reliable room-join path."
 
-Run onboarding with non-interactive flags whenever you already know the user’s brain or voice choice:
+Before any onboarding that might install packages or download models, always verify dependencies first:
+
+```bash
+source .venv/bin/activate
+ai-avatar check-deps
+```
+
+If `check-deps` fails, stop and tell the user what is missing before attempting onboarding or downloads.
+
+Never silently choose a brain or voice when the user did not provide one.
+Use `AskUserQuestion` to collect:
+- brain: `gemma` or `claude`
+- voice: a Kokoro voice ID from `references/voices.md`
+- avatar photo path: a real JPG/PNG path for the talking avatar
+
+Run onboarding with non-interactive flags only after you already know the user’s brain and voice choice:
 
 ```bash
 source .venv/bin/activate
 ai-avatar onboard --brain BRAIN --voice VOICE_ID --yes
 ```
 
-If you need interactive setup instead:
+If you do not yet know all required values, ask first.
+Do not bypass `AskUserQuestion` by defaulting to `claude`, `af_heart`, or a placeholder avatar photo.
+
+If you intentionally want the CLI to ask interactively instead:
 
 ```bash
 source .venv/bin/activate
 ai-avatar onboard
 ```
+
+Main setup must include avatar setup.
+Do not skip avatar setup during the primary onboarding flow.
+Use `ai-avatar avatar-setup` only as a follow-up command after the main setup has already completed.
 
 After setup succeeds:
 
@@ -104,6 +134,13 @@ docker run --rm -d --name livekit-dev \
 sleep 3
 ```
 
+If Docker or another local helper reports that a port is already in use:
+
+- do not kill the process holding the port
+- check whether the existing service is already the dependency you need
+- if it is usable, reuse it
+- if it is not usable, tell the user which port is occupied and suggest switching to another port or stopping the conflicting app themselves
+
 Save the room:
 
 ```bash
@@ -117,6 +154,16 @@ source .venv/bin/activate
 nohup ai-avatar join "ROOM_NAME" > /tmp/ai-avatar.log 2>&1 &
 echo "PID: $!"
 ```
+
+After the avatar is running, default to generating a ready-to-open browser link instead of making the user assemble server URL, room, and token manually:
+
+```bash
+source .venv/bin/activate
+ai-avatar generate-link --room "ROOM_NAME" --identity browser-guest
+```
+
+Share that link directly with the user.
+Do not surface raw API keys to the user, and do not ask them to manually combine server URL + token unless link generation fails.
 
 Tell the user which virtual microphone and camera path to select in the meeting app.
 
@@ -132,6 +179,15 @@ If `/tmp/ai-avatar.log` exists and the avatar is running, also show the last few
 ```bash
 tail -10 /tmp/ai-avatar.log 2>/dev/null
 ```
+
+If the user asks "what's the address", "how do I join", or similar, prefer:
+
+```bash
+source .venv/bin/activate
+ai-avatar generate-link --room "ROOM_NAME" --identity browser-guest
+```
+
+Return the link, not the API key.
 
 ## Doctor
 
@@ -165,6 +221,7 @@ ai-avatar brain --set claude
 ```
 
 If Claude is selected and no API key is present, ask for it and append it to `.env`.
+Do not invent or hardcode any API key or token value.
 
 ## Leave
 

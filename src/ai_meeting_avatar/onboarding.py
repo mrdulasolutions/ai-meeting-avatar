@@ -81,8 +81,6 @@ def _choose_brain(config_path: str, preset_brain: str | None = None, auto_confir
     _step("Step 1/5 - Choose Brain")
     if preset_brain:
         backend = preset_brain.lower()
-    elif auto_confirm:
-        backend = "claude"
     else:
         console.print(
             Panel(
@@ -113,8 +111,6 @@ def _choose_voice(config_path: str, preset_voice: str | None = None, auto_confir
 
     if preset_voice:
         voice = preset_voice
-    elif auto_confirm:
-        voice = "af_heart"
     else:
         table = Table(title="Voices")
         table.add_column("#")
@@ -145,7 +141,7 @@ def _setup_brain(config_path: str, backend: str, auto_confirm: bool = False) -> 
                     api_key = line.split("=", 1)[1].strip()
                     break
 
-        if not api_key and not auto_confirm:
+        if not api_key:
             api_key = Prompt.ask("Paste your Anthropic API key", password=True)
 
         if api_key:
@@ -178,8 +174,6 @@ def _setup_avatar(config_path: str, photo: str | None = None, auto_confirm: bool
 
     if photo:
         photo_path = photo
-    elif auto_confirm:
-        photo_path = "./assets/avatar.jpg"
     else:
         photo_path = Prompt.ask("Path to avatar photo", default="./assets/avatar.jpg")
 
@@ -196,9 +190,7 @@ def _setup_avatar(config_path: str, photo: str | None = None, auto_confirm: bool
         [("torch", "torch"), ("cv2", "opencv-python"), ("pyvirtualcam", "pyvirtualcam")]
     )
     if missing:
-        should_install = True if auto_confirm else Confirm.ask(
-            "Install avatar dependencies now?", default=True
-        )
+        should_install = Confirm.ask("Install avatar dependencies now?", default=True)
         if should_install and not _install_package("[avatar]"):
             console.print("[red]Could not install avatar dependencies.[/red]")
             return False
@@ -230,7 +222,6 @@ async def run_onboarding(
     preset_brain: str | None = None,
     preset_voice: str | None = None,
     skip_test: bool = False,
-    skip_avatar: bool = False,
     auto_confirm: bool = False,
 ) -> None:
     _check_python_version()
@@ -243,7 +234,7 @@ async def run_onboarding(
             border_style="cyan",
         )
     )
-    if not auto_confirm and not Confirm.ask("Start setup?", default=True):
+    if not Confirm.ask("Start setup?", default=True):
         return
 
     _step("Step 0/5 - Base Dependencies")
@@ -257,9 +248,7 @@ async def run_onboarding(
         ]
     )
     if missing:
-        should_install = True if auto_confirm else Confirm.ask(
-            "Install missing base dependencies now?", default=True
-        )
+        should_install = Confirm.ask("Install missing base dependencies now?", default=True)
         if should_install and not _install_package():
             console.print("[red]Base dependency install failed.[/red]")
             raise SystemExit(1)
@@ -267,8 +256,7 @@ async def run_onboarding(
     backend = _choose_brain(config_path, preset_brain, auto_confirm)
     _choose_voice(config_path, preset_voice, auto_confirm)
     _setup_brain(config_path, backend, auto_confirm)
-    if not skip_avatar:
-        _setup_avatar(config_path, None, auto_confirm)
+    _setup_avatar(config_path, None, auto_confirm)
     ready = _run_doctor_summary(config_path)
     if not skip_test:
         console.print("[dim]Run `ai-avatar test-pipeline --text \"hello\"` after setup to confirm the speech path.[/dim]")

@@ -11,10 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+from click.testing import CliRunner
 
 from ai_meeting_avatar.config import AppConfig
 from ai_meeting_avatar.diagnostics import gather_state
 from ai_meeting_avatar.llm import ChatHistory, GemmaLLM
+from ai_meeting_avatar.main import cli
 from ai_meeting_avatar.orchestrator import create_room_token
 from ai_meeting_avatar.stt import EnergyVAD, WhisperSTT
 from ai_meeting_avatar.tts import CoquiXTTS
@@ -304,3 +306,20 @@ class TestTokens:
         token = create_room_token(cfg, "demo", "avatar", "AI Meeting Avatar")
         assert isinstance(token, str)
         assert token.count(".") == 2
+
+    def test_generate_link_outputs_browser_url(self, tmp_path):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            """
+livekit:
+  url: "wss://example.livekit.cloud"
+  api_key: "devkey"
+  api_secret: "secret"
+"""
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--config", str(cfg_file), "generate-link", "--room", "demo"])
+        assert result.exit_code == 0
+        assert "https://meet.livekit.io/custom/?" in result.output
+        assert "liveKitUrl=" in result.output
+        assert "token=" in result.output

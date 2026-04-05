@@ -22,6 +22,7 @@
 | Docker not found | Install Docker Desktop from docker.com |
 | Python 3.14+ "too new" / kokoro-onnx fails | kokoro-onnx only supports Python 3.11–3.13. Install: `brew install python@3.13` then `python3.13 -m venv .venv` |
 | Python 3.10 or older | Need Python 3.11+. Install: `brew install python@3.13` |
+| Port already in use | Do not kill the owning process automatically. Check whether the dependency is already running on that port; if not, choose a different port or ask the user to stop the conflicting app themselves. |
 
 ## Wizard step failures
 
