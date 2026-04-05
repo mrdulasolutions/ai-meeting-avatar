@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 PREFS_DIR = Path.home() / ".config" / "ai-meeting-avatar"
 PREFS_FILE = PREFS_DIR / "prefs.json"

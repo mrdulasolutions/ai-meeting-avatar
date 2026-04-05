@@ -111,7 +111,7 @@ tts:
   #     bf_emma, bf_isabella, bm_george, bm_lewis
   voice: "af_heart"
   speed: 1.0          # speech rate multiplier (0.5 = slow, 2.0 = fast)
-  lang: "en-us"       # "en-us" or "en-gb"
+  lang: "en-us"
   # Directory where kokoro-v1.0.onnx and voices-v1.0.bin are stored
   # setup_models.sh downloads them here automatically
   model_dir: "./models/kokoro"

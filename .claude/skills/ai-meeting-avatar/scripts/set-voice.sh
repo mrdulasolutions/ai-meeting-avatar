@@ -1,5 +1,5 @@
 #!/bin/bash
-# Set the TTS voice in config.yaml and prefs
+# Set the TTS voice through the CLI and prefs
 # Usage: set-voice.sh <voice-id>
 set -euo pipefail
 
@@ -9,20 +9,13 @@ PROJECT="$(cd "$SKILL_DIR/../../.." && pwd)"
 
 cd "$PROJECT"
 
-# Update config.yaml
-if [ ! -f "config.yaml" ]; then
-  echo "Error: config.yaml not found in $PROJECT"
+if [ ! -x ".venv/bin/ai-avatar" ] && [ ! -x ".venv/bin/python" ]; then
+  echo "Error: virtual environment not found in $PROJECT"
   exit 1
 fi
 
-sed -i '' "s/^  voice: .*/  voice: \"$VOICE\"/" config.yaml
-echo "config.yaml voice set to $VOICE"
-
-# Update lang if British voice
-case "$VOICE" in
-  bf_*|bm_*) sed -i '' "s/^  lang: .*/  lang: \"en-gb\"/" config.yaml; echo "lang set to en-gb" ;;
-  af_*|am_*) sed -i '' "s/^  lang: .*/  lang: \"en-us\"/" config.yaml; echo "lang set to en-us" ;;
-esac
+source .venv/bin/activate
+ai-avatar voice --set "$VOICE"
 
 # Save to prefs
 bash "$SKILL_DIR/scripts/save-pref.sh" voice "$VOICE"

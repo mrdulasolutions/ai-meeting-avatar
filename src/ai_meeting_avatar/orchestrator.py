@@ -1,34 +1,18 @@
 """
-Orchestrator — ties STT → LLM → TTS into a LiveKit agent.
-
-Architecture
-────────────
-1.  The agent joins a LiveKit room as a participant.
-2.  It subscribes to every remote audio track.
-3.  Each audio frame is fed into an EnergyVAD.
-4.  When VAD detects end-of-speech it fires the pipeline:
-      audio → WhisperSTT → GemmaLLM (LiteRT-LM) → CoquiXTTS → AudioSource → room
-5.  (Phase 2) Audio streams immediately while the AvatarRenderer generates
-    lip-synced video in the background.  Rendered frames are pushed to a
-    virtual webcam (pyvirtualcam) or OBS, appearing as a camera in Zoom/Meet.
-
-One pipeline task runs at a time per agent instance; overlapping utterances
-are queued rather than processed concurrently so the LLM context is coherent.
-
-LiveKit docs: https://docs.livekit.io/agents/
+Orchestrator — direct LiveKit room client for the synced meeting avatar.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import scipy.io.wavfile as wav_io
+from livekit.api import AccessToken, VideoGrants
 from livekit import rtc
 
 from .avatar import (
@@ -38,7 +22,8 @@ from .avatar import (
     create_renderer,
     create_virtual_camera,
 )
-from .config import AppConfig, load_config
+from .config import AppConfig
+from .diagnostics import RUNTIME_ROOM_FILE
 from .llm import ChatHistory, GemmaLLM
 from .llm_claude import ClaudeLLM
 from .stt import EnergyVAD, WhisperSTT
@@ -113,6 +98,8 @@ class MeetingAvatarAgent:
             system_prompt=config.agent.system_prompt,
             max_turns=config.llm.history_turns,
         )
+        self._audio_source: Optional[rtc.AudioSource] = None
+        self._track_tasks: set[asyncio.Task] = set()
 
         # Serialise pipeline calls so LLM context stays coherent
         self._pipeline_lock = asyncio.Lock()
@@ -127,7 +114,7 @@ class MeetingAvatarAgent:
         self._llm.load()
         await self._avatar.load()
 
-        # Start virtual camera (pyvirtualcam) if avatar is enabled
+        # Start virtual camera (pyvirtualcam) if configured
         if self._vcam is not None:
             try:
                 await self._vcam.start()
@@ -137,7 +124,10 @@ class MeetingAvatarAgent:
                 logger.exception("Failed to start virtual camera — continuing without it")
                 self._vcam = None
 
-        if self._cfg.obs.enabled:
+        use_obs = self._cfg.avatar.camera_output == "obs" or (
+            self._cfg.avatar.camera_output == "auto" and self._vcam is None
+        )
+        if use_obs:
             self._obs = OBSVirtualCamera(
                 host=self._cfg.obs.host,
                 port=self._cfg.obs.port,
@@ -162,9 +152,7 @@ class MeetingAvatarAgent:
         for participant in room.remote_participants.values():
             for pub in participant.track_publications.values():
                 if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
-                    asyncio.ensure_future(
-                        self._handle_audio_track(pub.track)  # type: ignore[arg-type]
-                    )
+                    self._spawn_track_task(pub.track)  # type: ignore[arg-type]
 
         # Subscribe to future tracks
         @room.on("track_subscribed")
@@ -174,7 +162,7 @@ class MeetingAvatarAgent:
             participant: rtc.RemoteParticipant,
         ) -> None:
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                asyncio.ensure_future(self._handle_audio_track(track))  # type: ignore[arg-type]
+                self._spawn_track_task(track)  # type: ignore[arg-type]
 
         logger.info("Agent running in room '%s'. Listening …", room.name)
 
@@ -183,6 +171,11 @@ class MeetingAvatarAgent:
         await disconnected.wait()
 
         # Cleanup virtual camera and OBS on disconnect
+        for task in list(self._track_tasks):
+            task.cancel()
+        if self._track_tasks:
+            await asyncio.gather(*self._track_tasks, return_exceptions=True)
+
         if self._vcam is not None:
             await self._vcam.stop()
         if self._obs is not None:
@@ -192,6 +185,11 @@ class MeetingAvatarAgent:
                 logger.debug("OBS disconnect failed (may already be closed).")
 
         logger.info("Room disconnected — agent shutting down.")
+
+    def _spawn_track_task(self, track: rtc.AudioTrack) -> None:
+        task = asyncio.create_task(self._handle_audio_track(track))
+        self._track_tasks.add(task)
+        task.add_done_callback(self._track_tasks.discard)
 
     # ── Audio track handler ────────────────────────────────────────────────────
 
@@ -272,6 +270,8 @@ class MeetingAvatarAgent:
 
     async def _speak(self, text: str) -> None:
         """Synthesise *text* and publish audio to the LiveKit room."""
+        if self._audio_source is None:
+            raise RuntimeError("Audio source is not ready.")
         # Phase 2: also render avatar video and push to OBS
         if self._cfg.avatar.enabled:
             await self._speak_with_avatar(text)
@@ -357,31 +357,59 @@ class MeetingAvatarAgent:
             await self._obs.update_source(rendered)
 
 
-# ── LiveKit worker entrypoint ──────────────────────────────────────────────────
+def create_room_token(
+    config: AppConfig,
+    room_name: str,
+    identity: str,
+    display_name: str,
+    *,
+    hidden: bool = True,
+    kind: str = "agent",
+) -> str:
+    return (
+        AccessToken(config.livekit.api_key, config.livekit.api_secret)
+        .with_identity(identity)
+        .with_name(display_name)
+        .with_kind(kind)
+        .with_grants(
+            VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
+                hidden=hidden,
+            )
+        )
+        .to_jwt()
+    )
 
 
-async def entrypoint(ctx) -> None:
-    """
-    Called by the LiveKit worker harness for each room job.
-
-    The function signature matches livekit-agents JobContext.
-    """
-    config = load_config(os.getenv("AI_AVATAR_CONFIG", "config.yaml"))
-
+async def join_room(config: AppConfig, room_name: str, identity: str | None = None) -> None:
+    room = rtc.Room()
     agent = MeetingAvatarAgent(config)
 
-    await ctx.connect()
+    participant_identity = identity or "ai-meeting-avatar"
+    token = create_room_token(config, room_name, participant_identity, config.agent.name)
 
-    # Publish our audio track before loading models so we appear in the room
+    logger.info("Connecting directly to LiveKit room '%s' at %s", room_name, config.livekit.url)
+    await room.connect(config.livekit.url, token)
+    RUNTIME_ROOM_FILE.write_text(room_name)
+
     audio_source = rtc.AudioSource(
         sample_rate=config.tts.sample_rate,
         num_channels=1,
     )
     local_track = rtc.LocalAudioTrack.create_audio_track("avatar-voice", audio_source)
     pub_options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
-    await ctx.room.local_participant.publish_track(local_track, pub_options)
+    await room.local_participant.publish_track(local_track, pub_options)
 
-    logger.info("Loading models — this may take 30-120 s on first run …")
-    await agent.load_models()
-
-    await agent.run(ctx.room, audio_source)
+    try:
+        logger.info("Loading avatar runtime for room '%s' …", room_name)
+        await agent.load_models()
+        await agent.run(room, audio_source)
+    finally:
+        if room.isconnected():
+            await room.disconnect()
+        if RUNTIME_ROOM_FILE.exists():
+            RUNTIME_ROOM_FILE.unlink()

@@ -22,7 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ai_meeting_avatar.config import load_config
-from ai_meeting_avatar.llm import ChatHistory, OllamaLLM
+from ai_meeting_avatar.llm import ChatHistory
+from ai_meeting_avatar.orchestrator import _build_llm
 from ai_meeting_avatar.stt import WhisperSTT
 from ai_meeting_avatar.tts import CoquiXTTS
 
@@ -55,14 +56,8 @@ async def main() -> None:
     )
     stt.load()
 
-    logger.info("Initialising LLM (Gemma 4, %s) …", cfg.llm.model_path)
-    llm = OllamaLLM(
-        model_path=cfg.llm.model_path,
-        system_prompt=cfg.agent.system_prompt,
-        enable_tools=cfg.llm.enable_tools,
-        max_tokens=cfg.llm.max_tokens,
-        temperature=cfg.llm.temperature,
-    )
+    logger.info("Initialising LLM backend (%s) …", cfg.llm.backend)
+    llm = _build_llm(cfg)
     llm.load()
 
     logger.info("Loading TTS (Kokoro, voice=%s) …", cfg.tts.voice)

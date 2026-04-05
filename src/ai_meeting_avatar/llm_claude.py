@@ -20,7 +20,6 @@ final text response token-by-token using AsyncAnthropic.messages.stream().
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from typing import AsyncGenerator

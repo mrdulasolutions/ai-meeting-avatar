@@ -164,11 +164,11 @@ class KokoroTTS:
             raise RuntimeError("Call KokoroTTS.load() before synthesising.")
 
         v = voice or self._voice
-        l = lang or self._lang
+        language = lang or self._lang
 
         loop = asyncio.get_event_loop()
         audio, sr = await loop.run_in_executor(
-            None, self._synthesize_sync, text, v, l
+            None, self._synthesize_sync, text, v, language
         )
         return audio, sr
 
